@@ -38,7 +38,7 @@
 
 .bookmarks-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
     gap: 1rem;
 }
 
@@ -72,7 +72,7 @@
 .bookmarks-card-title {
     flex: 1;
     min-width: 0;
-    text-transform: uppercase;
+    /* text-transform: uppercase; */
 }
 
 .bookmarks-card-arrow {
@@ -87,7 +87,7 @@
 
 @container widget (max-width: 599px) {
     .bookmarks-cards {
-        grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
     }
 }
 
@@ -277,8 +277,9 @@
     border-color: var(--color-primary);
 }
 
+/* Match the muted text of the "+ Add bookmark" card this form opens from. */
 .bookmarks-form-input::placeholder {
-    color: var(--color-text-base-muted);
+    color: var(--color-text-subdue);
 }
 
 .bookmarks-form-footer {
