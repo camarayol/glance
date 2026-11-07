@@ -305,6 +305,7 @@ server:
 | proxied | boolean | no | false |
 | base-url | string | no | |
 | assets-path | string | no |  |
+| widget-update-interval | string | no | 1m |
 
 #### `host`
 The address which the server will listen on. Setting it to `localhost` means that only the machine that the server is running on will be able to access the dashboard. By default it will listen on all interfaces.
@@ -357,6 +358,16 @@ To be able to point to an asset from your assets path, use the `/assets/` path l
 
 ```yaml
 icon: /assets/gitea-icon.png
+```
+
+#### `widget-update-interval`
+How often Glance checks in the background whether any widget data has expired and needs to be refreshed. Accepts durations such as `30s`, `1m` or `5m`, and defaults to `1m`. Separately from this interval, all widgets are preloaded once at startup so that the first page load does not have to wait for their data.
+
+Set it to `0s` to disable the background refresh. Widget data will then only be refreshed when a page is opened. The startup preload still applies.
+
+```yaml
+server:
+  widget-update-interval: 5m
 ```
 
 ## Document

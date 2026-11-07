@@ -25,6 +25,11 @@ var (
 
 const STATIC_ASSETS_CACHE_DURATION = 24 * time.Hour
 
+// DEFAULT_WIDGET_UPDATE_INTERVAL is used when server.widget-update-interval
+// is not set in the config. It determines how often widgets are checked in the
+// background so that data is refreshed proactively, before a page requests it.
+const DEFAULT_WIDGET_UPDATE_INTERVAL = 1 * time.Minute
+
 var reservedPageSlugs = []string{"login", "logout"}
 
 type application struct {
@@ -230,14 +235,17 @@ func newApplication(c *config) (*application, error) {
 	return app, nil
 }
 
-func (p *page) updateOutdatedWidgets() {
+func (p *page) updateOutdatedWidgets(ctx context.Context) {
 	now := time.Now()
 
 	var wg sync.WaitGroup
-	context := context.Background()
 
 	for w := range p.HeadWidgets {
 		widget := p.HeadWidgets[w]
+
+		if ctx.Err() != nil {
+			break
+		}
 
 		if !widget.requiresUpdate(&now) {
 			continue
@@ -246,13 +254,17 @@ func (p *page) updateOutdatedWidgets() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			widget.update(context)
+			widget.update(ctx)
 		}()
 	}
 
 	for c := range p.Columns {
 		for w := range p.Columns[c].Widgets {
 			widget := p.Columns[c].Widgets[w]
+
+			if ctx.Err() != nil {
+				break
+			}
 
 			if !widget.requiresUpdate(&now) {
 				continue
@@ -261,12 +273,72 @@ func (p *page) updateOutdatedWidgets() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				widget.update(context)
+				widget.update(ctx)
 			}()
 		}
 	}
 
 	wg.Wait()
+}
+
+// updateOutdatedWidgetsOnAllPages updates outdated widgets on every page in
+// parallel. Pages are locked for the duration of the update so that a request
+// never renders a widget that is in the middle of being updated.
+func (a *application) updateOutdatedWidgetsOnAllPages(ctx context.Context) {
+	var wg sync.WaitGroup
+
+	for p := range a.Config.Pages {
+		page := &a.Config.Pages[p]
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			page.mu.Lock()
+			defer page.mu.Unlock()
+
+			page.updateOutdatedWidgets(ctx)
+		}()
+	}
+
+	wg.Wait()
+}
+
+// keepWidgetsUpToDate preloads all widgets right after startup so that the
+// first page load does not have to wait for any network requests. It then
+// keeps checking in the background and refreshes widgets as their cache
+// expires, which means content is already warm when someone opens a page.
+func (a *application) keepWidgetsUpToDate(ctx context.Context) {
+	a.updateOutdatedWidgetsOnAllPages(ctx)
+
+	updateInterval := DEFAULT_WIDGET_UPDATE_INTERVAL
+	if a.Config.Server.WidgetUpdateInterval != nil {
+		updateInterval = time.Duration(*a.Config.Server.WidgetUpdateInterval)
+	}
+
+	// A zero or negative interval disables the background refresh, in which
+	// case widgets are only updated when a page is opened.
+	if updateInterval <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(updateInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.updateOutdatedWidgetsOnAllPages(ctx)
+		}
+	}
 }
 
 func (a *application) resolveUserDefinedAssetPath(path string) string {
@@ -353,7 +425,7 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 		page.mu.Lock()
 		defer page.mu.Unlock()
 
-		page.updateOutdatedWidgets()
+		page.updateOutdatedWidgets(r.Context())
 		err = pageContentTemplate.Execute(&responseBytes, pageData)
 	}()
 
@@ -490,6 +562,9 @@ func (a *application) server() (func() error, func() error) {
 		w.Write(a.parsedManifest)
 	})
 
+	updateCtx, stopWidgetUpdates := context.WithCancel(context.Background())
+	go a.keepWidgetsUpToDate(updateCtx)
+
 	var absAssetsPath string
 	if a.Config.Server.AssetsPath != "" {
 		absAssetsPath, _ = filepath.Abs(a.Config.Server.AssetsPath)
@@ -520,6 +595,7 @@ func (a *application) server() (func() error, func() error) {
 	}
 
 	stop := func() error {
+		stopWidgetUpdates()
 		return server.Close()
 	}
 

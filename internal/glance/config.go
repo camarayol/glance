@@ -29,11 +29,12 @@ const (
 
 type config struct {
 	Server struct {
-		Host       string `yaml:"host"`
-		Port       uint16 `yaml:"port"`
-		Proxied    bool   `yaml:"proxied"`
-		AssetsPath string `yaml:"assets-path"`
-		BaseURL    string `yaml:"base-url"`
+		Host                 string         `yaml:"host"`
+		Port                 uint16         `yaml:"port"`
+		Proxied              bool           `yaml:"proxied"`
+		AssetsPath           string         `yaml:"assets-path"`
+		BaseURL              string         `yaml:"base-url"`
+		WidgetUpdateInterval *durationField `yaml:"widget-update-interval"`
 	} `yaml:"server"`
 
 	Auth struct {
@@ -103,6 +104,11 @@ func newConfigFromYAML(contents []byte) (*config, error) {
 	err = yaml.Unmarshal(contents, config)
 	if err != nil {
 		return nil, err
+	}
+
+	if config.Server.WidgetUpdateInterval == nil {
+		interval := durationField(DEFAULT_WIDGET_UPDATE_INTERVAL)
+		config.Server.WidgetUpdateInterval = &interval
 	}
 
 	if err = isConfigStateValid(config); err != nil {
