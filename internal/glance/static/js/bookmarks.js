@@ -135,10 +135,25 @@ function openContextMenu(card, location, clientX, clientY) {
     };
 
     const onDocumentKeyDown = (event) => {
-        if (event.key !== "Escape") return;
+        if (event.key === "Escape") {
+            event.preventDefault();
+            closeActiveMenu();
+            return;
+        }
+
+        if (event.key !== "Tab") return;
+
+        const focusables = Array.from(menu.querySelectorAll(".bookmarks-menu-item")).filter((element) => {
+            return !element.disabled;
+        });
+
+        const index = focusables.indexOf(document.activeElement);
+        if (index === -1) return;
+
+        const step = event.shiftKey ? -1 : 1;
 
         event.preventDefault();
-        closeActiveMenu();
+        focusables[(index + step + focusables.length) % focusables.length].focus();
     };
 
     const onViewportChange = () => closeActiveMenu();
@@ -448,6 +463,25 @@ function buildForm({ endpoint, method, submitLabel, initial, extraBody, onSaved 
 
     const form = elem("form")
         .classes("bookmarks-form")
+        .on("keydown", (event) => {
+            if (event.key !== "Tab") return;
+
+            // Cycle between the fields and the buttons explicitly. Browsers
+            // that do not put buttons in the tab order by default (e.g. Safari
+            // without full keyboard access) would otherwise move focus out of
+            // the page from the last field.
+            const focusables = [titleInput, urlInput, descriptionInput, submit, cancel].filter((element) => {
+                return !element.disabled;
+            });
+
+            const index = focusables.indexOf(document.activeElement);
+            if (index === -1) return;
+
+            const step = event.shiftKey ? -1 : 1;
+
+            event.preventDefault();
+            focusables[(index + step + focusables.length) % focusables.length].focus();
+        })
         .on("submit", async (event) => {
             event.preventDefault();
 
