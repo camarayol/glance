@@ -169,18 +169,14 @@
     transform: translateY(-50%);
 }
 
-.bookmarks-popover {
+.bookmarks-popover, .bookmarks-menu {
     position: fixed;
     z-index: 100;
-    max-height: calc(100vh - 16px);
-    overflow-y: auto;
-    padding: var(--widget-content-padding);
     background: var(--color-popover-background);
     border: 1px solid var(--color-popover-border);
     border-radius: var(--border-radius);
     box-shadow: 0 15px 20px -10px hsla(var(--bghs), calc(var(--bgl) * 0.2), 0.5);
-    transform-origin: top left;
-    animation: bookmarksPopoverEntrance .15s ease-out backwards;
+    animation: bookmarksPopoverEntrance .12s ease-out backwards;
 }
 
 @keyframes bookmarksPopoverEntrance {
@@ -190,19 +186,19 @@
     }
 }
 
+.bookmarks-popover {
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
+    padding: var(--widget-content-padding);
+    transform-origin: top left;
+}
+
 .bookmarks-menu {
-    position: fixed;
-    z-index: 100;
     display: flex;
     flex-direction: column;
     min-width: 12rem;
     max-width: min(20rem, calc(100vw - 16px));
     padding: 0.4rem;
-    background: var(--color-popover-background);
-    border: 1px solid var(--color-popover-border);
-    border-radius: var(--border-radius);
-    box-shadow: 0 15px 20px -10px hsla(var(--bghs), calc(var(--bgl) * 0.2), 0.5);
-    animation: bookmarksPopoverEntrance .1s ease-out backwards;
 }
 
 .bookmarks-menu-item {

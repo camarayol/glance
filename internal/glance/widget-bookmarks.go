@@ -154,11 +154,11 @@ type bookmarkLinkEntry struct {
 	Description string `yaml:"description,omitempty"`
 }
 
-// writeBookmarksConfig locates the config file that defines this widget and
-// applies a change to it. Comments and formatting of the rest of the file are
-// preserved by the individual change functions, which edit the file textually
-// instead of re-encoding the whole document.
-func (widget *bookmarksWidget) writeBookmarksConfig(apply func(path string, contents []byte, groups *yaml.Node) error) error {
+// writeBookmarksConfig locates the config file that defines this widget,
+// applies a change to it and writes the result back. Comments and formatting of
+// the rest of the file are preserved by the change functions, which edit the
+// file textually instead of re-encoding the whole document.
+func (widget *bookmarksWidget) writeBookmarksConfig(change func(contents []byte, groups *yaml.Node) ([]byte, error)) error {
 	if widget.configPath == "" {
 		return errors.New("the config file path is not available")
 	}
@@ -200,7 +200,12 @@ func (widget *bookmarksWidget) writeBookmarksConfig(apply func(path string, cont
 			continue
 		}
 
-		return apply(path, contents, groups)
+		updated, err := change(contents, groups)
+		if err != nil {
+			return err
+		}
+
+		return writeConfigFile(path, updated)
 	}
 
 	return fmt.Errorf("could not find the bookmarks widget with id %q in the config files", widget.BookmarksID)
@@ -209,50 +214,35 @@ func (widget *bookmarksWidget) writeBookmarksConfig(apply func(path string, cont
 // appendBookmarkToConfig inserts a bookmark right after the last link of the
 // group.
 func (widget *bookmarksWidget) appendBookmarkToConfig(groupIndex int, link bookmarkLink) error {
-	return widget.writeBookmarksConfig(func(path string, contents []byte, groups *yaml.Node) error {
+	return widget.writeBookmarksConfig(func(contents []byte, groups *yaml.Node) ([]byte, error) {
 		linksKeyNode, linksNode, err := bookmarksGroupLinks(groups, groupIndex)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		updated, err := insertYAMLSequenceItem(contents, linksKeyNode, linksNode, link)
-		if err != nil {
-			return err
-		}
-
-		return writeConfigFile(path, updated)
+		return insertYAMLSequenceItem(contents, linksKeyNode, linksNode, link)
 	})
 }
 
 func (widget *bookmarksWidget) updateBookmarkInConfig(groupIndex, linkIndex int, link bookmarkLink) error {
-	return widget.writeBookmarksConfig(func(path string, contents []byte, groups *yaml.Node) error {
+	return widget.writeBookmarksConfig(func(contents []byte, groups *yaml.Node) ([]byte, error) {
 		linkNode, err := bookmarkLinkNode(groups, groupIndex, linkIndex)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		updated, err := updateBookmarkLinkInFile(contents, linkNode, link)
-		if err != nil {
-			return err
-		}
-
-		return writeConfigFile(path, updated)
+		return updateBookmarkLinkInFile(contents, linkNode, link)
 	})
 }
 
 func (widget *bookmarksWidget) deleteBookmarkFromConfig(groupIndex, linkIndex int) error {
-	return widget.writeBookmarksConfig(func(path string, contents []byte, groups *yaml.Node) error {
+	return widget.writeBookmarksConfig(func(contents []byte, groups *yaml.Node) ([]byte, error) {
 		linkNode, err := bookmarkLinkNode(groups, groupIndex, linkIndex)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		updated, err := removeBookmarkLinkFromFile(contents, linkNode)
-		if err != nil {
-			return err
-		}
-
-		return writeConfigFile(path, updated)
+		return removeBookmarkLinkFromFile(contents, linkNode)
 	})
 }
 
@@ -678,7 +668,7 @@ type bookmarkRequestPayload struct {
 func (widget *bookmarksWidget) handleRequest(w http.ResponseWriter, r *http.Request) {
 	segments := strings.Split(strings.Trim(r.PathValue("path"), "/"), "/")
 
-	if len(segments) == 0 || segments[0] != "bookmarks" {
+	if segments[0] != "bookmarks" {
 		http.NotFound(w, r)
 		return
 	}

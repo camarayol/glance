@@ -49,8 +49,6 @@ function onDocumentClick(event) {
     const control = event.target.closest(".bookmarks-add");
     if (control === null) return;
 
-    closeActiveMenu();
-
     if (activePopover !== null && activePopover.anchor === control) {
         closeActivePopover();
         return;
@@ -104,8 +102,7 @@ function cardLocation(card) {
     const linkIndex = cards.indexOf(card);
     if (linkIndex === -1) return null;
 
-    location.linkIndex = linkIndex;
-    return location;
+    return { bookmarksID: location.bookmarksID, groupIndex: location.groupIndex, linkIndex: linkIndex };
 }
 
 function openContextMenu(card, location, clientX, clientY) {
@@ -156,18 +153,15 @@ function openContextMenu(card, location, clientX, clientY) {
         focusables[(index + step + focusables.length) % focusables.length].focus();
     };
 
-    const onViewportChange = () => closeActiveMenu();
-
     document.addEventListener("mousedown", onDocumentMouseDown, true);
     document.addEventListener("keydown", onDocumentKeyDown, true);
-    window.addEventListener("resize", onViewportChange);
-    window.addEventListener("scroll", onViewportChange, true);
+    window.addEventListener("resize", closeActiveMenu);
+    window.addEventListener("scroll", closeActiveMenu, true);
 
     activeMenu = {
         element: menu,
         onDocumentMouseDown: onDocumentMouseDown,
         onDocumentKeyDown: onDocumentKeyDown,
-        onViewportChange: onViewportChange,
     };
 
     menu.querySelector("button")?.focus({ preventScroll: true });
@@ -181,8 +175,8 @@ function closeActiveMenu() {
 
     document.removeEventListener("mousedown", menu.onDocumentMouseDown, true);
     document.removeEventListener("keydown", menu.onDocumentKeyDown, true);
-    window.removeEventListener("resize", menu.onViewportChange);
-    window.removeEventListener("scroll", menu.onViewportChange, true);
+    window.removeEventListener("resize", closeActiveMenu);
+    window.removeEventListener("scroll", closeActiveMenu, true);
 
     menu.element.remove();
 }
