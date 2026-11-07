@@ -117,7 +117,7 @@
 }
 
 /* Hidden while its popover is open, but it keeps its space in the grid. */
-.bookmarks-add-open {
+.bookmarks-anchor-hidden {
     visibility: hidden;
 }
 
@@ -169,7 +169,7 @@
     transform: translateY(-50%);
 }
 
-.bookmarks-add-popover {
+.bookmarks-popover {
     position: fixed;
     z-index: 100;
     max-height: calc(100vh - 16px);
@@ -180,17 +180,85 @@
     border-radius: var(--border-radius);
     box-shadow: 0 15px 20px -10px hsla(var(--bghs), calc(var(--bgl) * 0.2), 0.5);
     transform-origin: top left;
-    animation: bookmarksAddPopoverEntrance .15s ease-out backwards;
+    animation: bookmarksPopoverEntrance .15s ease-out backwards;
 }
 
-@keyframes bookmarksAddPopoverEntrance {
+@keyframes bookmarksPopoverEntrance {
     from {
         opacity: 0;
         transform: translateY(-4px) scale(.97);
     }
 }
 
-.bookmarks-add-form {
+.bookmarks-menu {
+    position: fixed;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    min-width: 12rem;
+    max-width: min(20rem, calc(100vw - 16px));
+    padding: 0.4rem;
+    background: var(--color-popover-background);
+    border: 1px solid var(--color-popover-border);
+    border-radius: var(--border-radius);
+    box-shadow: 0 15px 20px -10px hsla(var(--bghs), calc(var(--bgl) * 0.2), 0.5);
+    animation: bookmarksPopoverEntrance .1s ease-out backwards;
+}
+
+.bookmarks-menu-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    margin: 0;
+    padding: 0.45rem 0.8rem;
+    border: 0;
+    border-radius: calc(var(--border-radius) / 2);
+    background: transparent;
+    color: var(--color-text-base);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: color .2s, background-color .2s;
+}
+
+.bookmarks-menu-item:hover, .bookmarks-menu-item:focus-visible {
+    background: var(--color-widget-background-highlight);
+    color: var(--color-text-highlight);
+    outline: none;
+}
+
+.bookmarks-menu-item:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.bookmarks-menu-danger {
+    color: var(--color-negative);
+}
+
+.bookmarks-menu-label {
+    padding: 0.4rem 0.8rem 0.6rem;
+    color: var(--color-text-base);
+    font-size: var(--font-size-h6);
+    overflow-wrap: anywhere;
+}
+
+.bookmarks-menu-actions {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.bookmarks-menu-actions .bookmarks-menu-item {
+    width: auto;
+}
+
+.bookmarks-menu-error {
+    padding: 0.4rem 0.8rem 0;
+    font-size: var(--font-size-h6);
+    color: var(--color-negative);
+}
+
+.bookmarks-form {
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
@@ -198,7 +266,7 @@
     cursor: default;
 }
 
-.bookmarks-add-input {
+.bookmarks-form-input {
     width: 100%;
     padding: 0.4rem 0.7rem;
     border: 1px solid var(--color-widget-content-border);
@@ -208,23 +276,23 @@
     font: inherit;
 }
 
-.bookmarks-add-input:focus {
+.bookmarks-form-input:focus {
     outline: none;
     border-color: var(--color-primary);
 }
 
-.bookmarks-add-input::placeholder {
+.bookmarks-form-input::placeholder {
     color: var(--color-text-base-muted);
 }
 
-.bookmarks-add-footer {
+.bookmarks-form-footer {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 0.8rem;
 }
 
-.bookmarks-add-submit, .bookmarks-add-cancel {
+.bookmarks-form-submit, .bookmarks-form-cancel {
     padding: 0.3rem 1rem;
     border: 1px solid var(--color-widget-content-border);
     border-radius: calc(var(--border-radius) / 2);
@@ -235,21 +303,21 @@
     transition: color .2s, border-color .2s;
 }
 
-.bookmarks-add-submit {
+.bookmarks-form-submit {
     color: var(--color-primary);
 }
 
-.bookmarks-add-submit:hover:not(:disabled), .bookmarks-add-cancel:hover {
+.bookmarks-form-submit:hover:not(:disabled), .bookmarks-form-cancel:hover {
     color: var(--color-text-highlight);
     border-color: var(--color-text-subdue);
 }
 
-.bookmarks-add-submit:disabled {
+.bookmarks-form-submit:disabled {
     opacity: 0.5;
     cursor: default;
 }
 
-.bookmarks-add-error {
+.bookmarks-form-error {
     flex-basis: 100%;
     font-size: var(--font-size-h6);
     color: var(--color-negative);

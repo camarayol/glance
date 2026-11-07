@@ -74,7 +74,11 @@ func writeTestConfig(t *testing.T, contents string) string {
 }
 
 func bookmarksAddRequest(path string, body string) *http.Request {
-	request := httptest.NewRequest(http.MethodPost, "/api/widgets/test/"+path, strings.NewReader(body))
+	return bookmarksRequest(http.MethodPost, path, body)
+}
+
+func bookmarksRequest(method, path, body string) *http.Request {
+	request := httptest.NewRequest(method, "/api/widgets/test/"+path, strings.NewReader(body))
 	request.SetPathValue("path", path)
 	return request
 }
@@ -426,6 +430,374 @@ func TestBookmarksWidgetInitializeErrors(t *testing.T) {
 			widget := test.widget
 			if err := widget.initialize(); err == nil {
 				t.Error("expected an error, got nil")
+			}
+		})
+	}
+}
+
+const bookmarksEditTestConfig = `pages:
+  - name: Test
+    columns:
+      - size: full
+        widgets:
+          - type: bookmarks
+            style: cards
+            id: test
+            allow-add: true
+            groups:
+              - title: Group
+                links:
+                  - title: First
+                    url: https://first.example.com/
+
+                  - title: Middle  # keep me
+                    url: https://middle.example.com/
+                    description: middle desc
+                    icon: si:github
+                    same-tab: true
+
+                  - title: Last
+                    url: https://last.example.com/
+`
+
+func newEditTestWidget(t *testing.T) (*bookmarksWidget, string) {
+	t.Helper()
+
+	configPath := writeTestConfig(t, bookmarksEditTestConfig)
+	widget := parseBookmarksWidgetFromConfig(t, configPath)
+	widget.configPath = configPath
+
+	return widget, configPath
+}
+
+func TestBookmarksWidgetUpdateBookmark(t *testing.T) {
+	widget, configPath := newEditTestWidget(t)
+
+	response := httptest.NewRecorder()
+	widget.handleRequest(response, bookmarksRequest(
+		http.MethodPut,
+		"bookmarks/0/1",
+		`{"title": "Updated", "url": "https://updated.example.com/", "description": "new description"}`,
+	))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	if !strings.Contains(response.Body.String(), ">Updated<") {
+		t.Errorf("expected the response to contain the updated card, got %q", response.Body.String())
+	}
+
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading updated config: %v", err)
+	}
+
+	config := string(contents)
+
+	for _, want := range []string{
+		"title: Updated",
+		"url: https://updated.example.com/",
+		"description: new description",
+		"icon: si:github",
+		"same-tab: true",
+		"# keep me",
+		"title: First",
+		"title: Last",
+	} {
+		if !strings.Contains(config, want) {
+			t.Errorf("expected the config to contain %q, got:\n%s", want, config)
+		}
+	}
+
+	if strings.Contains(config, "Middle") || strings.Contains(config, "middle desc") {
+		t.Errorf("expected the old values to be replaced, got:\n%s", config)
+	}
+
+	reloaded := parseBookmarksWidgetFromConfig(t, configPath)
+
+	if len(reloaded.Groups[0].Links) != 3 {
+		t.Fatalf("expected 3 links, got %d", len(reloaded.Groups[0].Links))
+	}
+
+	link := reloaded.Groups[0].Links[1]
+
+	if link.Title != "Updated" || link.URL != "https://updated.example.com/" || link.Description != "new description" {
+		t.Errorf("unexpected reloaded link: %+v", link)
+	}
+
+	if !link.SameTab || link.Target != "" {
+		t.Errorf("expected the link's same-tab option to be preserved, got: %+v", link)
+	}
+
+	// The in-memory widget must be updated as well, without losing its options.
+	inMemory := widget.Groups[0].Links[1]
+
+	if inMemory.Title != "Updated" || inMemory.Description != "new description" {
+		t.Errorf("unexpected in-memory link: %+v", inMemory)
+	}
+
+	if !inMemory.SameTab || inMemory.Target != "" {
+		t.Errorf("expected the in-memory link's options to be preserved: %+v", inMemory)
+	}
+}
+
+func TestBookmarksWidgetUpdateAddsDescription(t *testing.T) {
+	widget, configPath := newEditTestWidget(t)
+
+	response := httptest.NewRecorder()
+	widget.handleRequest(response, bookmarksRequest(
+		http.MethodPut,
+		"bookmarks/0/0",
+		`{"title": "First", "url": "https://first.example.com/", "description": "added description"}`,
+	))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	reloaded := parseBookmarksWidgetFromConfig(t, configPath)
+	link := reloaded.Groups[0].Links[0]
+
+	if link.Description != "added description" {
+		t.Errorf("expected the description to be added, got: %+v", link)
+	}
+
+	if link.URL != "https://first.example.com/" || reloaded.Groups[0].Links[1].Title != "Middle" {
+		t.Errorf("expected the other links to be untouched, got: %+v", reloaded.Groups[0].Links)
+	}
+
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading updated config: %v", err)
+	}
+
+	addedAt := strings.Index(string(contents), "description: added description")
+	middleAt := strings.Index(string(contents), "title: Middle")
+
+	if addedAt == -1 || middleAt == -1 || addedAt > middleAt {
+		t.Errorf("expected the description to be inserted into the first link, got:\n%s", contents)
+	}
+}
+
+func TestBookmarksWidgetUpdateRemovesDescription(t *testing.T) {
+	widget, configPath := newEditTestWidget(t)
+
+	response := httptest.NewRecorder()
+	widget.handleRequest(response, bookmarksRequest(
+		http.MethodPut,
+		"bookmarks/0/1",
+		`{"title": "Middle", "url": "https://middle.example.com/", "description": ""}`,
+	))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading updated config: %v", err)
+	}
+
+	if strings.Contains(string(contents), "description:") {
+		t.Errorf("expected the description line to be removed, got:\n%s", contents)
+	}
+
+	reloaded := parseBookmarksWidgetFromConfig(t, configPath)
+
+	if reloaded.Groups[0].Links[1].Description != "" {
+		t.Errorf("expected the description to be removed, got: %+v", reloaded.Groups[0].Links[1])
+	}
+
+	if len(reloaded.Groups[0].Links) != 3 {
+		t.Errorf("expected all links to remain, got %d", len(reloaded.Groups[0].Links))
+	}
+}
+
+func TestBookmarksWidgetDeleteBookmark(t *testing.T) {
+	widget, configPath := newEditTestWidget(t)
+
+	response := httptest.NewRecorder()
+	widget.handleRequest(response, bookmarksRequest(http.MethodDelete, "bookmarks/0/1", ""))
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d: %s", response.Code, response.Body.String())
+	}
+
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading updated config: %v", err)
+	}
+
+	config := string(contents)
+
+	if strings.Contains(config, "Middle") || strings.Contains(config, "middle.example.com") {
+		t.Errorf("expected the bookmark to be removed, got:\n%s", config)
+	}
+
+	if !strings.Contains(config, "title: First") || !strings.Contains(config, "title: Last") {
+		t.Errorf("expected the other bookmarks to remain, got:\n%s", config)
+	}
+
+	if strings.Contains(config, "\n\n\n") {
+		t.Errorf("expected no leftover blank lines, got:\n%s", config)
+	}
+
+	reloaded := parseBookmarksWidgetFromConfig(t, configPath)
+
+	if len(reloaded.Groups[0].Links) != 2 || reloaded.Groups[0].Links[0].Title != "First" || reloaded.Groups[0].Links[1].Title != "Last" {
+		t.Errorf("unexpected links after delete: %+v", reloaded.Groups[0].Links)
+	}
+
+	if len(widget.Groups[0].Links) != 2 || widget.Groups[0].Links[1].Title != "Last" {
+		t.Errorf("expected the in-memory links to be updated, got: %+v", widget.Groups[0].Links)
+	}
+}
+
+func TestBookmarksWidgetUpdateAndDeleteUnknownBookmark(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		status int
+	}{
+		{"update unknown bookmark", http.MethodPut, "bookmarks/0/9", http.StatusNotFound},
+		{"delete unknown bookmark", http.MethodDelete, "bookmarks/0/9", http.StatusNotFound},
+		{"update unknown group", http.MethodPut, "bookmarks/9/0", http.StatusBadRequest},
+		{"delete unknown group", http.MethodDelete, "bookmarks/9/0", http.StatusBadRequest},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			widget, configPath := newEditTestWidget(t)
+			original, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("reading test config: %v", err)
+			}
+
+			response := httptest.NewRecorder()
+			widget.handleRequest(response, bookmarksRequest(
+				test.method,
+				test.path,
+				`{"title": "Updated", "url": "https://updated.example.com/"}`,
+			))
+
+			if response.Code != test.status {
+				t.Errorf("expected status %d, got %d", test.status, response.Code)
+			}
+
+			contents, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("reading config: %v", err)
+			}
+
+			if string(contents) != string(original) {
+				t.Error("expected the config file to be left untouched")
+			}
+		})
+	}
+}
+
+func TestBookmarksWidgetMethodNotAllowed(t *testing.T) {
+	tests := []struct {
+		method string
+		path   string
+		allow  string
+	}{
+		{http.MethodPut, "bookmarks", http.MethodPost},
+		{http.MethodDelete, "bookmarks", http.MethodPost},
+		{http.MethodPost, "bookmarks/0/0", http.MethodPut + ", " + http.MethodDelete},
+	}
+
+	for _, test := range tests {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
+			widget, _ := newEditTestWidget(t)
+
+			response := httptest.NewRecorder()
+			widget.handleRequest(response, bookmarksRequest(test.method, test.path, "{}"))
+
+			if response.Code != http.StatusMethodNotAllowed {
+				t.Errorf("expected status 405, got %d", response.Code)
+			}
+
+			if allow := response.Header().Get("Allow"); allow != test.allow {
+				t.Errorf("expected Allow header %q, got %q", test.allow, allow)
+			}
+		})
+	}
+}
+
+func TestBookmarksWidgetEditDisabled(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"update", http.MethodPut, "bookmarks/0/0"},
+		{"delete", http.MethodDelete, "bookmarks/0/0"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			widget, _ := newEditTestWidget(t)
+			widget.AllowAdd = false
+
+			response := httptest.NewRecorder()
+			widget.handleRequest(response, bookmarksRequest(
+				test.method,
+				test.path,
+				`{"title": "Updated", "url": "https://updated.example.com/"}`,
+			))
+
+			if response.Code != http.StatusForbidden {
+				t.Errorf("expected status 403, got %d", response.Code)
+			}
+		})
+	}
+}
+
+func TestBookmarksWidgetEditFlowStyleBookmark(t *testing.T) {
+	configPath := writeTestConfig(t, `pages:
+  - name: Test
+    columns:
+      - size: full
+        widgets:
+          - type: bookmarks
+            style: cards
+            id: test
+            allow-add: true
+            groups:
+              - title: Group
+                links: [{ title: Existing, url: "https://existing.example.com/" }]
+`)
+	original, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading test config: %v", err)
+	}
+
+	widget := parseBookmarksWidgetFromConfig(t, configPath)
+	widget.configPath = configPath
+
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			widget.handleRequest(response, bookmarksRequest(
+				method,
+				"bookmarks/0/0",
+				`{"title": "Updated", "url": "https://updated.example.com/"}`,
+			))
+
+			if response.Code != http.StatusInternalServerError {
+				t.Errorf("expected status 500, got %d", response.Code)
+			}
+
+			contents, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("reading config: %v", err)
+			}
+
+			if string(contents) != string(original) {
+				t.Error("expected the config file to be left untouched")
 			}
 		})
 	}

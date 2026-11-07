@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -84,6 +85,17 @@ func (group *bookmarkGroup) prepareLink(link *bookmarkLink) {
 	}
 }
 
+// newLink builds a link from the request payload, applying the group defaults.
+func (group *bookmarkGroup) newLink(payload bookmarkRequestPayload) bookmarkLink {
+	link := bookmarkLink{
+		Title:       payload.Title,
+		URL:         payload.URL,
+		Description: payload.Description,
+	}
+	group.prepareLink(&link)
+	return link
+}
+
 type bookmarksWidget struct {
 	widgetBase  `yaml:",inline"`
 	cachedHTML  template.HTML   `yaml:"-"`
@@ -142,10 +154,11 @@ type bookmarkLinkEntry struct {
 	Description string `yaml:"description,omitempty"`
 }
 
-// appendBookmarkToConfig writes a bookmark to the YAML file that defines this
-// widget. Comments and formatting of the rest of the file are preserved by
-// inserting the new list item textually right after the last link of the group.
-func (widget *bookmarksWidget) appendBookmarkToConfig(groupIndex int, link bookmarkLink) error {
+// writeBookmarksConfig locates the config file that defines this widget and
+// applies a change to it. Comments and formatting of the rest of the file are
+// preserved by the individual change functions, which edit the file textually
+// instead of re-encoding the whole document.
+func (widget *bookmarksWidget) writeBookmarksConfig(apply func(path string, contents []byte, groups *yaml.Node) error) error {
 	if widget.configPath == "" {
 		return errors.New("the config file path is not available")
 	}
@@ -187,14 +200,60 @@ func (widget *bookmarksWidget) appendBookmarkToConfig(groupIndex int, link bookm
 			continue
 		}
 
-		if groupIndex < 0 || groupIndex >= len(groups.Content) {
-			return errors.New("unknown group")
-		}
-
-		return insertBookmarkLinkIntoFile(path, contents, groups.Content[groupIndex], link)
+		return apply(path, contents, groups)
 	}
 
 	return fmt.Errorf("could not find the bookmarks widget with id %q in the config files", widget.BookmarksID)
+}
+
+// appendBookmarkToConfig inserts a bookmark right after the last link of the
+// group.
+func (widget *bookmarksWidget) appendBookmarkToConfig(groupIndex int, link bookmarkLink) error {
+	return widget.writeBookmarksConfig(func(path string, contents []byte, groups *yaml.Node) error {
+		linksKeyNode, linksNode, err := bookmarksGroupLinks(groups, groupIndex)
+		if err != nil {
+			return err
+		}
+
+		updated, err := insertYAMLSequenceItem(contents, linksKeyNode, linksNode, link)
+		if err != nil {
+			return err
+		}
+
+		return writeConfigFile(path, updated)
+	})
+}
+
+func (widget *bookmarksWidget) updateBookmarkInConfig(groupIndex, linkIndex int, link bookmarkLink) error {
+	return widget.writeBookmarksConfig(func(path string, contents []byte, groups *yaml.Node) error {
+		linkNode, err := bookmarkLinkNode(groups, groupIndex, linkIndex)
+		if err != nil {
+			return err
+		}
+
+		updated, err := updateBookmarkLinkInFile(contents, linkNode, link)
+		if err != nil {
+			return err
+		}
+
+		return writeConfigFile(path, updated)
+	})
+}
+
+func (widget *bookmarksWidget) deleteBookmarkFromConfig(groupIndex, linkIndex int) error {
+	return widget.writeBookmarksConfig(func(path string, contents []byte, groups *yaml.Node) error {
+		linkNode, err := bookmarkLinkNode(groups, groupIndex, linkIndex)
+		if err != nil {
+			return err
+		}
+
+		updated, err := removeBookmarkLinkFromFile(contents, linkNode)
+		if err != nil {
+			return err
+		}
+
+		return writeConfigFile(path, updated)
+	})
 }
 
 // findBookmarksWidgetGroups returns the "groups" sequence node of the bookmarks
@@ -229,49 +288,225 @@ func findBookmarksWidgetGroups(node *yaml.Node, id string) *yaml.Node {
 	return nil
 }
 
-func insertBookmarkLinkIntoFile(path string, contents []byte, groupNode *yaml.Node, link bookmarkLink) error {
-	if groupNode.Kind != yaml.MappingNode || groupNode.Style&yaml.FlowStyle != 0 {
-		return errors.New("cannot add bookmark: the group must use block style")
+// bookmarksGroupLinks returns the "links" key and value nodes of the group with
+// the given index.
+func bookmarksGroupLinks(groups *yaml.Node, groupIndex int) (*yaml.Node, *yaml.Node, error) {
+	if groupIndex < 0 || groupIndex >= len(groups.Content) {
+		return nil, nil, errors.New("unknown group")
 	}
 
-	var linksKeyNode, linksNode *yaml.Node
+	groupNode := groups.Content[groupIndex]
+
+	if groupNode.Kind != yaml.MappingNode || groupNode.Style&yaml.FlowStyle != 0 {
+		return nil, nil, errors.New("cannot modify bookmarks: the group must use block style")
+	}
 
 	for i := 0; i+1 < len(groupNode.Content); i += 2 {
-		if groupNode.Content[i].Value == "links" {
-			linksKeyNode = groupNode.Content[i]
-			linksNode = groupNode.Content[i+1]
-			break
+		if groupNode.Content[i].Value != "links" {
+			continue
 		}
+
+		linksNode := groupNode.Content[i+1]
+
+		// An empty "links:" property is decoded as a null scalar rather than an
+		// empty sequence.
+		isEmptyList := linksNode.Kind == yaml.ScalarNode && linksNode.Tag == "!!null"
+
+		if !isEmptyList && linksNode.Kind != yaml.SequenceNode {
+			return nil, nil, errors.New("cannot modify bookmarks: the links property is not a list")
+		}
+
+		return groupNode.Content[i], linksNode, nil
 	}
 
-	if linksKeyNode == nil || linksNode == nil {
-		return errors.New("cannot add bookmark: the group has no links property")
-	}
+	return nil, nil, errors.New("cannot modify bookmarks: the group has no links property")
+}
 
-	// An empty "links:" property is decoded as a null scalar rather than an
-	// empty sequence.
-	isEmptyList := linksNode.Kind == yaml.ScalarNode && linksNode.Tag == "!!null"
-
-	if !isEmptyList && linksNode.Kind != yaml.SequenceNode {
-		return errors.New("cannot add bookmark: the links property is not a list")
-	}
-
-	updated, err := insertYAMLSequenceItem(contents, linksKeyNode, linksNode, link)
+func bookmarkLinkNode(groups *yaml.Node, groupIndex, linkIndex int) (*yaml.Node, error) {
+	_, linksNode, err := bookmarksGroupLinks(groups, groupIndex)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	if linksNode.Kind != yaml.SequenceNode || linkIndex < 0 || linkIndex >= len(linksNode.Content) {
+		return nil, errors.New("unknown bookmark")
+	}
+
+	return linksNode.Content[linkIndex], nil
+}
+
+func writeConfigFile(path string, contents []byte) error {
 	mode := os.FileMode(0o644)
-	if stat, statErr := os.Stat(path); statErr == nil {
+	if stat, err := os.Stat(path); err == nil {
 		mode = stat.Mode().Perm()
 	}
 
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, updated, mode); err != nil {
+	if err := os.WriteFile(tmpPath, contents, mode); err != nil {
 		return err
 	}
 
 	return os.Rename(tmpPath, path)
+}
+
+// updateBookmarkLinkInFile rewrites only the lines that hold a changed value,
+// which keeps the rest of the bookmark (extra properties, comments) intact.
+func updateBookmarkLinkInFile(contents []byte, linkNode *yaml.Node, link bookmarkLink) ([]byte, error) {
+	if linkNode.Kind != yaml.MappingNode || linkNode.Style&yaml.FlowStyle != 0 {
+		return nil, errors.New("cannot edit bookmark: the bookmark must use block style")
+	}
+
+	lines := strings.Split(string(contents), "\n")
+	lastLine := linkNode.Line
+
+	replaced := make(map[int]string)
+	descriptionLine := -1
+	descriptionPresent := false
+
+	for i := 0; i+1 < len(linkNode.Content); i += 2 {
+		keyNode, valueNode := linkNode.Content[i], linkNode.Content[i+1]
+
+		if keyNode.Line > lastLine {
+			lastLine = keyNode.Line
+		}
+
+		if valueNode.Line > lastLine {
+			lastLine = valueNode.Line
+		}
+
+		var newValue string
+
+		switch keyNode.Value {
+		case "title":
+			newValue = link.Title
+		case "url":
+			newValue = link.URL
+		case "description":
+			descriptionPresent = true
+			newValue = link.Description
+		default:
+			continue
+		}
+
+		if newValue == valueNode.Value {
+			continue
+		}
+
+		if valueNode.Kind != yaml.ScalarNode || valueNode.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || valueNode.Line != keyNode.Line {
+			return nil, fmt.Errorf("cannot edit bookmark: %s must be a single-line value", keyNode.Value)
+		}
+
+		if keyNode.Line < 1 || keyNode.Line > len(lines) || keyNode.Column < 1 || keyNode.Column > len(lines[keyNode.Line-1]) {
+			return nil, errors.New("cannot edit bookmark: the bookmark position is out of range")
+		}
+
+		if keyNode.Value == "description" && newValue == "" {
+			if keyNode.Line == linkNode.Line {
+				return nil, errors.New("cannot edit bookmark: description must be on its own line")
+			}
+
+			descriptionLine = keyNode.Line - 1
+			continue
+		}
+
+		encoded, err := marshalYAMLString(newValue)
+		if err != nil {
+			return nil, err
+		}
+
+		suffix := ""
+		if valueNode.LineComment != "" {
+			suffix = " " + valueNode.LineComment
+		}
+
+		line := lines[keyNode.Line-1]
+		replaced[keyNode.Line-1] = line[:keyNode.Column-1] + keyNode.Value + ": " + encoded + suffix
+	}
+
+	for lineIndex, text := range replaced {
+		lines[lineIndex] = text
+	}
+
+	switch {
+	case descriptionLine != -1:
+		lines = append(lines[:descriptionLine], lines[descriptionLine+1:]...)
+	case link.Description != "" && !descriptionPresent:
+		if lastLine < 1 || lastLine > len(lines) {
+			return nil, errors.New("cannot edit bookmark: the bookmark position is out of range")
+		}
+
+		encoded, err := marshalYAMLString(link.Description)
+		if err != nil {
+			return nil, err
+		}
+
+		newLine := strings.Repeat(" ", linkNode.Column-1) + "description: " + encoded
+		lines = append(lines[:lastLine], append([]string{newLine}, lines[lastLine:]...)...)
+	}
+
+	return []byte(strings.Join(lines, "\n")), nil
+}
+
+// removeBookmarkLinkFromFile deletes the lines that make up the bookmark.
+func removeBookmarkLinkFromFile(contents []byte, linkNode *yaml.Node) ([]byte, error) {
+	if linkNode.Kind != yaml.MappingNode || linkNode.Style&yaml.FlowStyle != 0 {
+		return nil, errors.New("cannot delete bookmark: the bookmark must use block style")
+	}
+
+	if linkNode.Line < 1 {
+		return nil, errors.New("cannot delete bookmark: the bookmark position is out of range")
+	}
+
+	lines := strings.Split(string(contents), "\n")
+	start := linkNode.Line - 1
+
+	if start >= len(lines) {
+		return nil, errors.New("cannot delete bookmark: the bookmark position is out of range")
+	}
+
+	// The bookmark can also be written with the dash on its own line.
+	if start > 0 && strings.TrimSpace(lines[start-1]) == "-" {
+		start--
+	}
+
+	end := start
+
+	var walk func(node *yaml.Node)
+	walk = func(node *yaml.Node) {
+		if node.Line-1 > end {
+			end = node.Line - 1
+		}
+
+		for _, child := range node.Content {
+			walk(child)
+		}
+	}
+	walk(linkNode)
+
+	if end >= len(lines) {
+		end = len(lines) - 1
+	}
+
+	result := make([]string, 0, len(lines))
+	result = append(result, lines[:start]...)
+	result = append(result, lines[end+1:]...)
+
+	// Removing a bookmark can leave the blank lines that separated it from its
+	// neighbors next to each other, so drop one of them.
+	if start > 0 && start < len(result) && strings.TrimSpace(result[start-1]) == "" && strings.TrimSpace(result[start]) == "" {
+		result = append(result[:start], result[start+1:]...)
+	}
+
+	return []byte(strings.Join(result, "\n")), nil
+}
+
+func marshalYAMLString(value string) (string, error) {
+	encoded, err := yaml.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimRight(string(encoded), "\n"), nil
 }
 
 func insertYAMLSequenceItem(contents []byte, linksKeyNode, linksNode *yaml.Node, link bookmarkLink) ([]byte, error) {
@@ -426,59 +661,129 @@ func (widget *bookmarksWidget) markConfigSelfWrite() {
 	configSelfWriteContentsHash.Store(&hash)
 }
 
-// handleRequest handles POST /api/widgets/{widget}/bookmarks, which adds a
-// bookmark to one of the widget's groups and returns the rendered card.
+// bookmarkRequestPayload is the body of the requests that create or update a
+// bookmark.
+type bookmarkRequestPayload struct {
+	GroupIndex  int    `json:"group-index"`
+	Title       string `json:"title"`
+	URL         string `json:"url"`
+	Description string `json:"description"`
+}
+
+// handleRequest handles the bookmark endpoints:
+//
+//	POST   /api/widgets/{widget}/bookmarks
+//	PUT    /api/widgets/{widget}/bookmarks/{group}/{bookmark}
+//	DELETE /api/widgets/{widget}/bookmarks/{group}/{bookmark}
 func (widget *bookmarksWidget) handleRequest(w http.ResponseWriter, r *http.Request) {
-	if strings.Trim(r.PathValue("path"), "/") != "bookmarks" {
+	segments := strings.Split(strings.Trim(r.PathValue("path"), "/"), "/")
+
+	if len(segments) == 0 || segments[0] != "bookmarks" {
 		http.NotFound(w, r)
 		return
 	}
 
 	if !widget.AllowAdd {
-		http.Error(w, "adding bookmarks is not enabled for this widget", http.StatusForbidden)
+		http.Error(w, "editing bookmarks is not enabled for this widget", http.StatusForbidden)
 		return
 	}
 
-	var payload struct {
-		GroupIndex  int    `json:"group-index"`
-		Title       string `json:"title"`
-		URL         string `json:"url"`
-		Description string `json:"description"`
+	switch len(segments) {
+	case 1:
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+
+		widget.handleAddBookmark(w, r)
+	case 3:
+		groupIndex, groupErr := strconv.Atoi(segments[1])
+		linkIndex, linkErr := strconv.Atoi(segments[2])
+
+		if groupErr != nil || linkErr != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		switch r.Method {
+		case http.MethodPut:
+			widget.handleUpdateBookmark(w, r, groupIndex, linkIndex)
+		case http.MethodDelete:
+			widget.handleDeleteBookmark(w, groupIndex, linkIndex)
+		default:
+			methodNotAllowed(w, http.MethodPut+", "+http.MethodDelete)
+		}
+	default:
+		http.NotFound(w, r)
 	}
+}
+
+func methodNotAllowed(w http.ResponseWriter, allow string) {
+	w.Header().Set("Allow", allow)
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+func readBookmarkPayload(w http.ResponseWriter, r *http.Request) (bookmarkRequestPayload, bool) {
+	var payload bookmarkRequestPayload
 
 	body := http.MaxBytesReader(w, r.Body, bookmarksMaxRequestBodySize)
 	if err := json.NewDecoder(body).Decode(&payload); err != nil {
 		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
-		return
+		return payload, false
 	}
 
-	title := strings.TrimSpace(payload.Title)
-	rawURL := strings.TrimSpace(payload.URL)
-	description := strings.TrimSpace(payload.Description)
+	payload.Title = strings.TrimSpace(payload.Title)
+	payload.URL = strings.TrimSpace(payload.URL)
+	payload.Description = strings.TrimSpace(payload.Description)
 
-	if title == "" {
+	if payload.Title == "" {
 		http.Error(w, "title is required", http.StatusBadRequest)
-		return
+		return payload, false
 	}
 
-	if len([]rune(title)) > bookmarksMaxTitleLength {
+	if len([]rune(payload.Title)) > bookmarksMaxTitleLength {
 		http.Error(w, fmt.Sprintf("title is longer than %d characters", bookmarksMaxTitleLength), http.StatusBadRequest)
-		return
+		return payload, false
 	}
 
-	if len([]rune(description)) > bookmarksMaxDescriptionSize {
+	if len([]rune(payload.Description)) > bookmarksMaxDescriptionSize {
 		http.Error(w, fmt.Sprintf("description is longer than %d characters", bookmarksMaxDescriptionSize), http.StatusBadRequest)
-		return
+		return payload, false
 	}
 
-	if len(rawURL) > bookmarksMaxURLLength {
+	if len(payload.URL) > bookmarksMaxURLLength {
 		http.Error(w, fmt.Sprintf("url is longer than %d characters", bookmarksMaxURLLength), http.StatusBadRequest)
-		return
+		return payload, false
 	}
 
-	parsedURL, err := url.Parse(rawURL)
+	parsedURL, err := url.Parse(payload.URL)
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
 		http.Error(w, "url must be a valid http or https URL", http.StatusBadRequest)
+		return payload, false
+	}
+
+	return payload, true
+}
+
+func renderBookmarkCard(w http.ResponseWriter, link bookmarkLink) (string, bool) {
+	cardHTML, err := executeTemplateToString(bookmarkCardTemplate, link)
+	if err != nil {
+		slog.Error("Failed to render bookmark card", "error", err)
+		http.Error(w, "failed to render bookmark", http.StatusInternalServerError)
+		return "", false
+	}
+
+	return cardHTML, true
+}
+
+func writeHTML(w http.ResponseWriter, html string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
+}
+
+func (widget *bookmarksWidget) handleAddBookmark(w http.ResponseWriter, r *http.Request) {
+	payload, ok := readBookmarkPayload(w, r)
+	if !ok {
 		return
 	}
 
@@ -488,17 +793,10 @@ func (widget *bookmarksWidget) handleRequest(w http.ResponseWriter, r *http.Requ
 	}
 
 	group := &widget.Groups[payload.GroupIndex]
-	link := bookmarkLink{
-		Title:       title,
-		URL:         rawURL,
-		Description: description,
-	}
-	group.prepareLink(&link)
+	link := group.newLink(payload)
 
-	cardHTML, err := executeTemplateToString(bookmarkCardTemplate, link)
-	if err != nil {
-		slog.Error("Failed to render bookmark card", "error", err)
-		http.Error(w, "failed to render bookmark", http.StatusInternalServerError)
+	cardHTML, ok := renderBookmarkCard(w, link)
+	if !ok {
 		return
 	}
 
@@ -513,6 +811,75 @@ func (widget *bookmarksWidget) handleRequest(w http.ResponseWriter, r *http.Requ
 	group.Links = append(group.Links, link)
 	widget.rerender()
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(cardHTML))
+	writeHTML(w, cardHTML)
+}
+
+func (widget *bookmarksWidget) handleUpdateBookmark(w http.ResponseWriter, r *http.Request, groupIndex, linkIndex int) {
+	payload, ok := readBookmarkPayload(w, r)
+	if !ok {
+		return
+	}
+
+	if groupIndex < 0 || groupIndex >= len(widget.Groups) {
+		http.Error(w, "unknown group", http.StatusBadRequest)
+		return
+	}
+
+	group := &widget.Groups[groupIndex]
+
+	if linkIndex < 0 || linkIndex >= len(group.Links) {
+		http.Error(w, "unknown bookmark", http.StatusNotFound)
+		return
+	}
+
+	// Keep the link's other options (icon, target, ...) which stay in the config.
+	link := group.Links[linkIndex]
+	link.Title = payload.Title
+	link.URL = payload.URL
+	link.Description = payload.Description
+
+	cardHTML, ok := renderBookmarkCard(w, link)
+	if !ok {
+		return
+	}
+
+	if err := widget.updateBookmarkInConfig(groupIndex, linkIndex, link); err != nil {
+		slog.Error("Failed to update the bookmark in the config file", "error", err, "config", widget.configPath)
+		http.Error(w, "failed to save bookmark: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	widget.markConfigSelfWrite()
+
+	group.Links[linkIndex] = link
+	widget.rerender()
+
+	writeHTML(w, cardHTML)
+}
+
+func (widget *bookmarksWidget) handleDeleteBookmark(w http.ResponseWriter, groupIndex, linkIndex int) {
+	if groupIndex < 0 || groupIndex >= len(widget.Groups) {
+		http.Error(w, "unknown group", http.StatusBadRequest)
+		return
+	}
+
+	group := &widget.Groups[groupIndex]
+
+	if linkIndex < 0 || linkIndex >= len(group.Links) {
+		http.Error(w, "unknown bookmark", http.StatusNotFound)
+		return
+	}
+
+	if err := widget.deleteBookmarkFromConfig(groupIndex, linkIndex); err != nil {
+		slog.Error("Failed to delete the bookmark from the config file", "error", err, "config", widget.configPath)
+		http.Error(w, "failed to delete bookmark: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	widget.markConfigSelfWrite()
+
+	group.Links = append(group.Links[:linkIndex], group.Links[linkIndex+1:]...)
+	widget.rerender()
+
+	w.WriteHeader(http.StatusNoContent)
 }

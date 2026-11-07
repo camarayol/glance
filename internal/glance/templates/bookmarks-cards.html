@@ -7,12 +7,12 @@
         {{- if ne $group.Title "" }}
         <div class="bookmarks-group-title size-h3 margin-bottom-7">{{ $group.Title }}</div>
         {{- end }}
-        <div class="bookmarks-cards">
+        <div class="bookmarks-cards"{{ if $.AllowAdd }} data-bookmarks-id="{{ $.BookmarksID }}" data-group-index="{{ $groupIndex }}"{{ end }}>
             {{- range $group.Links }}
             {{ template "bookmark-card.html" . }}
             {{- end }}
             {{- if $.AllowAdd }}
-            <div class="bookmarks-card bookmarks-add" data-bookmarks-id="{{ $.BookmarksID }}" data-group-index="{{ $groupIndex }}"></div>
+            <div class="bookmarks-card bookmarks-add"></div>
             {{- end }}
         </div>
     </div>

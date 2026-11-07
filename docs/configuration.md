@@ -2632,7 +2632,7 @@ A unique identifier for this widget. Required when `allow-add` is enabled. May o
 
 `allow-add`
 
-When enabled, an "Add bookmark" control is shown in every group. Clicking it replaces the control in place with a floating form (its top lines up with the other cards), so a bookmark can be added without leaving the dashboard. The form closes after the bookmark has been saved; add the next one by opening it again.
+When enabled, an "Add bookmark" control is shown in every group and right-clicking an existing bookmark card opens a menu that can edit or delete it. Clicking the add control replaces it in place with a floating form (its top lines up with the other cards), so a bookmark can be added without leaving the dashboard. The form closes after the bookmark has been saved; add the next one by opening it again.
 
 Added bookmarks are written directly into the config file that defines the widget (the main config file or an included file such as `bookmarks.yml`), appended to the `links` of the group the control belongs to. Comments and formatting of the rest of the file are preserved, so the config stays the single source of truth. Because the file is written by Glance itself, the config watcher does not trigger a full reload (and a cache wipe) for these changes.
 
@@ -2664,9 +2664,23 @@ curl -X POST http://localhost:8080/api/widgets/home/bookmarks \
 
 `home` is the widget's `id`. The numeric widget id found in the page source also works, but it changes whenever the config is reloaded, so `id` is recommended for scripts. `group-index` is the zero-based index of the group the bookmark should be added to. The response body contains the rendered card HTML.
 
+Existing bookmarks can be changed with the same payload (without `group-index`) and the bookmark's zero-based position in its group:
+
+```sh
+# Replace a bookmark
+curl -X PUT http://localhost:8080/api/widgets/home/bookmarks/0/1 \
+  -H 'Content-Type: application/json' \
+  -d '{"title": "GitHub", "url": "https://github.com/", "description": ""}'
+
+# Delete a bookmark
+curl -X DELETE http://localhost:8080/api/widgets/home/bookmarks/0/1
+```
+
+Editing only rewrites the `title`, `url` and `description` of the bookmark, other properties such as `icon` or `same-tab` are left as they are.
+
 > [!NOTE]
 >
-> The config directory must be writable for added bookmarks to be saved. In Docker, make sure it is not mounted as read-only.
+> The config directory must be writable for bookmark changes to be saved. In Docker, make sure it is not mounted as read-only.
 
 ##### `groups`
 An array of groups which can optionally have a title and a custom color.
