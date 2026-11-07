@@ -112,6 +112,18 @@ func serveApp(configPath string) error {
 	hadValidConfigOnStartup := false
 	var stopServer func() error
 
+	// loadConfig parses the given contents and records where the config lives,
+	// which widgets that can modify the config rely on.
+	loadConfig := func(contents []byte) (*config, error) {
+		config, err := newConfigFromYAML(contents)
+		if err != nil {
+			return nil, err
+		}
+
+		config.configPath = absConfigPath
+		return config, nil
+	}
+
 	onChange := func(newContents []byte) {
 		if selfWrite := configSelfWriteContentsHash.Swap(nil); selfWrite != nil && *selfWrite == sha256.Sum256(newContents) {
 			log.Println("Config was updated by Glance itself, skipping reload")
@@ -122,7 +134,7 @@ func serveApp(configPath string) error {
 			log.Println("Config file changed, reloading...")
 		}
 
-		config, err := newConfigFromYAML(newContents)
+		config, err := loadConfig(newContents)
 		if err != nil {
 			log.Printf("Config has errors: %v", err)
 
@@ -132,8 +144,6 @@ func serveApp(configPath string) error {
 
 			return
 		}
-
-		config.configPath = absConfigPath
 
 		app, err := newApplication(config)
 		if err != nil {
@@ -181,12 +191,10 @@ func serveApp(configPath string) error {
 	} else {
 		log.Printf("Error starting file watcher, config file changes will require a manual restart. (%v)", err)
 
-		config, err := newConfigFromYAML(configContents)
+		config, err := loadConfig(configContents)
 		if err != nil {
 			return fmt.Errorf("validating config file: %w", err)
 		}
-
-		config.configPath = absConfigPath
 
 		app, err := newApplication(config)
 		if err != nil {

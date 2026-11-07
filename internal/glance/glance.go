@@ -43,6 +43,10 @@ type application struct {
 	widgetByID     map[uint64]widget
 	widgetPageByID map[uint64]*page
 
+	// bookmarksWidgetByID maps the config-level id of a bookmarks widget to
+	// the widget, so that requests can refer to it by a stable name.
+	bookmarksWidgetByID map[string]*bookmarksWidget
+
 	RequiresAuth           bool
 	authSecretKey          []byte
 	usernameHashToUsername map[string]string
@@ -52,12 +56,13 @@ type application struct {
 
 func newApplication(c *config) (*application, error) {
 	app := &application{
-		Version:        buildVersion,
-		CreatedAt:      time.Now(),
-		Config:         *c,
-		slugToPage:     make(map[string]*page),
-		widgetByID:     make(map[uint64]widget),
-		widgetPageByID: make(map[uint64]*page),
+		Version:             buildVersion,
+		CreatedAt:           time.Now(),
+		Config:              *c,
+		slugToPage:          make(map[string]*page),
+		widgetByID:          make(map[uint64]widget),
+		widgetPageByID:      make(map[uint64]*page),
+		bookmarksWidgetByID: make(map[string]*bookmarksWidget),
 	}
 	config := &app.Config
 
@@ -166,6 +171,10 @@ func newApplication(c *config) (*application, error) {
 
 		if bookmarks, ok := widget.(*bookmarksWidget); ok {
 			bookmarks.configPath = config.configPath
+
+			if bookmarks.BookmarksID != "" {
+				app.bookmarksWidgetByID[bookmarks.BookmarksID] = bookmarks
+			}
 		}
 
 		container, ok := widget.(interface{ _childWidgets() widgets })
@@ -263,30 +272,12 @@ func (p *page) updateOutdatedWidgets(ctx context.Context) {
 
 	var wg sync.WaitGroup
 
-	for w := range p.HeadWidgets {
-		widget := p.HeadWidgets[w]
-
-		if ctx.Err() != nil {
-			break
-		}
-
-		if !widget.requiresUpdate(&now) {
-			continue
-		}
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			widget.update(ctx)
-		}()
-	}
-
-	for c := range p.Columns {
-		for w := range p.Columns[c].Widgets {
-			widget := p.Columns[c].Widgets[w]
+	updateOutdated := func(list widgets) {
+		for w := range list {
+			widget := list[w]
 
 			if ctx.Err() != nil {
-				break
+				return
 			}
 
 			if !widget.requiresUpdate(&now) {
@@ -299,6 +290,12 @@ func (p *page) updateOutdatedWidgets(ctx context.Context) {
 				widget.update(ctx)
 			}()
 		}
+	}
+
+	updateOutdated(p.HeadWidgets)
+
+	for c := range p.Columns {
+		updateOutdated(p.Columns[c].Widgets)
 	}
 
 	wg.Wait()
@@ -317,10 +314,8 @@ func (a *application) updateOutdatedWidgetsOnAllPages(ctx context.Context) {
 		go func() {
 			defer wg.Done()
 
-			select {
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				return
-			default:
 			}
 
 			page.mu.Lock()
@@ -340,10 +335,7 @@ func (a *application) updateOutdatedWidgetsOnAllPages(ctx context.Context) {
 func (a *application) keepWidgetsUpToDate(ctx context.Context) {
 	a.updateOutdatedWidgetsOnAllPages(ctx)
 
-	updateInterval := DEFAULT_WIDGET_UPDATE_INTERVAL
-	if a.Config.Server.WidgetUpdateInterval != nil {
-		updateInterval = time.Duration(*a.Config.Server.WidgetUpdateInterval)
-	}
+	updateInterval := a.Config.widgetUpdateInterval()
 
 	// A zero or negative interval disables the background refresh, in which
 	// case widgets are only updated when a page is opened.
@@ -529,20 +521,20 @@ func (a *application) handleWidgetRequest(w http.ResponseWriter, r *http.Request
 // stable config-level id can be used.
 func (a *application) findWidgetByPathValue(value string) (widget, *page, bool) {
 	if widgetID, err := strconv.ParseUint(value, 10, 64); err == nil {
-		widget, exists := a.widgetByID[widgetID]
-		if exists {
-			page, pageExists := a.widgetPageByID[widgetID]
-			return widget, page, pageExists
+		found, exists := a.widgetByID[widgetID]
+		if !exists {
+			return nil, nil, false
 		}
+
+		return found, a.widgetPageByID[widgetID], true
 	}
 
-	for _, widget := range a.widgetByID {
-		if bookmarks, ok := widget.(*bookmarksWidget); ok && bookmarks.BookmarksID == value {
-			return widget, a.widgetPageByID[widget.GetID()], true
-		}
+	bookmarks, exists := a.bookmarksWidgetByID[value]
+	if !exists {
+		return nil, nil, false
 	}
 
-	return nil, nil, false
+	return bookmarks, a.widgetPageByID[bookmarks.GetID()], true
 }
 
 func (a *application) StaticAssetPath(asset string) string {

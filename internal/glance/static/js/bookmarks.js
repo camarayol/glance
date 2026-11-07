@@ -4,6 +4,8 @@ let activePopover = null;
 let activeMenu = null;
 let listenerAttached = false;
 
+const VIEWPORT_MARGIN = 8;
+
 export function setup() {
     const controls = document.getElementsByClassName("bookmarks-add");
 
@@ -138,19 +140,7 @@ function openContextMenu(card, location, clientX, clientY) {
             return;
         }
 
-        if (event.key !== "Tab") return;
-
-        const focusables = Array.from(menu.querySelectorAll(".bookmarks-menu-item")).filter((element) => {
-            return !element.disabled;
-        });
-
-        const index = focusables.indexOf(document.activeElement);
-        if (index === -1) return;
-
-        const step = event.shiftKey ? -1 : 1;
-
-        event.preventDefault();
-        focusables[(index + step + focusables.length) % focusables.length].focus();
+        cycleFocus(event, Array.from(menu.querySelectorAll(".bookmarks-menu-item")));
     };
 
     document.addEventListener("mousedown", onDocumentMouseDown, true);
@@ -198,18 +188,10 @@ function menuItem(label, onClick, extraClass) {
 function showDeleteConfirmation(menu, card, location, reposition) {
     const error = elem("span").classes("bookmarks-menu-error").attrs({ role: "alert" });
 
-    const confirm = elem("button")
-        .classes("bookmarks-menu-item", "bookmarks-menu-danger")
-        .attrs({ type: "button" })
-        .text("Delete");
+    const confirm = menuItem("Delete", deleteBookmark, "bookmarks-menu-danger");
+    const cancel = menuItem("Cancel", () => closeActiveMenu());
 
-    const cancel = elem("button")
-        .classes("bookmarks-menu-item")
-        .attrs({ type: "button" })
-        .text("Cancel")
-        .on("click", () => closeActiveMenu());
-
-    confirm.on("click", async () => {
+    async function deleteBookmark() {
         confirm.disabled = true;
         cancel.disabled = true;
         error.textContent = "";
@@ -232,7 +214,7 @@ function showDeleteConfirmation(menu, card, location, reposition) {
             confirm.disabled = false;
             cancel.disabled = false;
         }
-    });
+    }
 
     menu.replaceChildren(
         elem("div").classes("bookmarks-menu-label").text(`Delete “${cardTitle(card)}”?`),
@@ -244,23 +226,29 @@ function showDeleteConfirmation(menu, card, location, reposition) {
     confirm.focus({ preventScroll: true });
 }
 
-function positionMenu(menu, clientX, clientY) {
-    const margin = 8;
+// cycleFocus moves focus between the given elements, wrapping around at the
+// ends. Browsers that do not put buttons in the tab order by default (e.g.
+// Safari without full keyboard access) would otherwise move focus out of the
+// popover or menu from the last element.
+function cycleFocus(event, elements) {
+    if (event.key !== "Tab") return;
 
+    const focusables = elements.filter((element) => !element.disabled);
+    const index = focusables.indexOf(document.activeElement);
+    if (index === -1) return;
+
+    const step = event.shiftKey ? -1 : 1;
+
+    event.preventDefault();
+    focusables[(index + step + focusables.length) % focusables.length].focus();
+}
+
+function positionMenu(menu, clientX, clientY) {
     menu.style.left = `${clientX}px`;
     menu.style.top = `${clientY}px`;
 
     const rect = menu.getBoundingClientRect();
-    let left = clientX;
-    let top = clientY;
-
-    if (left + rect.width > window.innerWidth - margin) {
-        left = Math.max(margin, window.innerWidth - rect.width - margin);
-    }
-
-    if (top + rect.height > window.innerHeight - margin) {
-        top = Math.max(margin, window.innerHeight - rect.height - margin);
-    }
+    const { left, top } = clampToViewport(clientX, clientY, rect.width, rect.height);
 
     menu.style.left = `${Math.round(left)}px`;
     menu.style.top = `${Math.round(top)}px`;
@@ -398,43 +386,32 @@ function closeActivePopover() {
 }
 
 function positionPopover(popover, anchor) {
-    const margin = 8;
     const rect = anchor.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
 
     // Match the width of the card the popover expands from, so it looks like
     // the card itself turned into the form.
-    const width = Math.min(Math.max(rect.width, 200), viewportWidth - margin * 2);
+    const width = Math.min(Math.max(rect.width, 200), window.innerWidth - VIEWPORT_MARGIN * 2);
 
     popover.style.width = `${Math.round(width)}px`;
 
-    const height = popover.offsetHeight;
-
-    let left = rect.left;
-
-    if (left + width > viewportWidth - margin) {
-        left = viewportWidth - width - margin;
-    }
-
-    if (left < margin) {
-        left = margin;
-    }
-
     // Expand from the card's own position rather than below it, so the top of
     // the popover lines up with the neighboring cards.
-    let top = rect.top;
-
-    if (top + height > viewportHeight - margin) {
-        top = Math.max(margin, viewportHeight - height - margin);
-    }
-
-    if (top < margin) {
-        top = margin;
-    }
+    const { left, top } = clampToViewport(rect.left, rect.top, width, popover.offsetHeight);
 
     popover.style.left = `${Math.round(left)}px`;
     popover.style.top = `${Math.round(top)}px`;
+}
+
+// clampToViewport keeps a box of the given size inside the viewport, leaving a
+// small margin around it.
+function clampToViewport(left, top, width, height) {
+    const maxLeft = Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN);
+    const maxTop = Math.max(VIEWPORT_MARGIN, window.innerHeight - height - VIEWPORT_MARGIN);
+
+    return {
+        left: Math.min(Math.max(left, VIEWPORT_MARGIN), maxLeft),
+        top: Math.min(Math.max(top, VIEWPORT_MARGIN), maxTop),
+    };
 }
 
 function buildForm({ endpoint, method, submitLabel, initial, extraBody, onSaved }) {
@@ -458,23 +435,7 @@ function buildForm({ endpoint, method, submitLabel, initial, extraBody, onSaved 
     const form = elem("form")
         .classes("bookmarks-form")
         .on("keydown", (event) => {
-            if (event.key !== "Tab") return;
-
-            // Cycle between the fields and the buttons explicitly. Browsers
-            // that do not put buttons in the tab order by default (e.g. Safari
-            // without full keyboard access) would otherwise move focus out of
-            // the page from the last field.
-            const focusables = [titleInput, urlInput, descriptionInput, submit, cancel].filter((element) => {
-                return !element.disabled;
-            });
-
-            const index = focusables.indexOf(document.activeElement);
-            if (index === -1) return;
-
-            const step = event.shiftKey ? -1 : 1;
-
-            event.preventDefault();
-            focusables[(index + step + focusables.length) % focusables.length].focus();
+            cycleFocus(event, [titleInput, urlInput, descriptionInput, submit, cancel]);
         })
         .on("submit", async (event) => {
             event.preventDefault();

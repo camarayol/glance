@@ -20,15 +20,25 @@ import (
 
 var bookmarksWidgetTemplate = mustParseTemplate("bookmarks.html", "widget-base.html")
 var bookmarksCardsWidgetTemplate = mustParseTemplate("bookmarks-cards.html", "widget-base.html", "bookmark-card.html")
-var bookmarkCardTemplate = mustParseTemplate("bookmark-card.html")
+
+// bookmarkCardTemplate is the card template of the cards widget's set, so that
+// the card markup only has to be parsed once.
+var bookmarkCardTemplate = bookmarksCardsWidgetTemplate.Lookup("bookmark-card.html")
 
 var bookmarksIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+// These allow the request handlers to tell a bad group or bookmark index apart
+// from a failure that happened while saving.
+var (
+	errBookmarkGroupNotFound = errors.New("unknown group")
+	errBookmarkNotFound      = errors.New("unknown bookmark")
+)
+
 const (
-	bookmarksMaxRequestBodySize = 16 * 1024
-	bookmarksMaxTitleLength     = 200
-	bookmarksMaxDescriptionSize = 1000
-	bookmarksMaxURLLength       = 2048
+	bookmarksMaxRequestBodySize   = 16 * 1024
+	bookmarksMaxTitleLength       = 200
+	bookmarksMaxDescriptionLength = 1000
+	bookmarksMaxURLLength         = 2048
 )
 
 type bookmarkLink struct {
@@ -155,9 +165,11 @@ type bookmarkLinkEntry struct {
 }
 
 // writeBookmarksConfig locates the config file that defines this widget,
-// applies a change to it and writes the result back. Comments and formatting of
-// the rest of the file are preserved by the change functions, which edit the
-// file textually instead of re-encoding the whole document.
+// applies a change to it, writes the result back and records the write so that
+// the config watcher does not reload the whole config in response to it.
+// Comments and formatting of the rest of the file are preserved by the change
+// functions, which edit the file textually instead of re-encoding the whole
+// document.
 func (widget *bookmarksWidget) writeBookmarksConfig(change func(contents []byte, groups *yaml.Node) ([]byte, error)) error {
 	if widget.configPath == "" {
 		return errors.New("the config file path is not available")
@@ -205,7 +217,12 @@ func (widget *bookmarksWidget) writeBookmarksConfig(change func(contents []byte,
 			return err
 		}
 
-		return writeConfigFile(path, updated)
+		if err := writeConfigFile(path, updated); err != nil {
+			return err
+		}
+
+		widget.markConfigSelfWrite()
+		return nil
 	}
 
 	return fmt.Errorf("could not find the bookmarks widget with id %q in the config files", widget.BookmarksID)
@@ -282,7 +299,7 @@ func findBookmarksWidgetGroups(node *yaml.Node, id string) *yaml.Node {
 // the given index.
 func bookmarksGroupLinks(groups *yaml.Node, groupIndex int) (*yaml.Node, *yaml.Node, error) {
 	if groupIndex < 0 || groupIndex >= len(groups.Content) {
-		return nil, nil, errors.New("unknown group")
+		return nil, nil, errBookmarkGroupNotFound
 	}
 
 	groupNode := groups.Content[groupIndex]
@@ -319,7 +336,7 @@ func bookmarkLinkNode(groups *yaml.Node, groupIndex, linkIndex int) (*yaml.Node,
 	}
 
 	if linksNode.Kind != yaml.SequenceNode || linkIndex < 0 || linkIndex >= len(linksNode.Content) {
-		return nil, errors.New("unknown bookmark")
+		return nil, errBookmarkNotFound
 	}
 
 	return linksNode.Content[linkIndex], nil
@@ -336,7 +353,12 @@ func writeConfigFile(path string, contents []byte) error {
 		return err
 	}
 
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	return nil
 }
 
 // updateBookmarkLinkInFile rewrites only the lines that hold a changed value,
@@ -726,33 +748,33 @@ func readBookmarkPayload(w http.ResponseWriter, r *http.Request) (bookmarkReques
 	payload.URL = strings.TrimSpace(payload.URL)
 	payload.Description = strings.TrimSpace(payload.Description)
 
-	if payload.Title == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
-		return payload, false
-	}
-
-	if len([]rune(payload.Title)) > bookmarksMaxTitleLength {
-		http.Error(w, fmt.Sprintf("title is longer than %d characters", bookmarksMaxTitleLength), http.StatusBadRequest)
-		return payload, false
-	}
-
-	if len([]rune(payload.Description)) > bookmarksMaxDescriptionSize {
-		http.Error(w, fmt.Sprintf("description is longer than %d characters", bookmarksMaxDescriptionSize), http.StatusBadRequest)
-		return payload, false
-	}
-
-	if len(payload.URL) > bookmarksMaxURLLength {
-		http.Error(w, fmt.Sprintf("url is longer than %d characters", bookmarksMaxURLLength), http.StatusBadRequest)
-		return payload, false
-	}
-
-	parsedURL, err := url.Parse(payload.URL)
-	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
-		http.Error(w, "url must be a valid http or https URL", http.StatusBadRequest)
+	if err := payload.validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return payload, false
 	}
 
 	return payload, true
+}
+
+// validate returns a message describing the first problem with the payload.
+func (payload bookmarkRequestPayload) validate() error {
+	switch {
+	case payload.Title == "":
+		return errors.New("title is required")
+	case len([]rune(payload.Title)) > bookmarksMaxTitleLength:
+		return fmt.Errorf("title is longer than %d characters", bookmarksMaxTitleLength)
+	case len([]rune(payload.Description)) > bookmarksMaxDescriptionLength:
+		return fmt.Errorf("description is longer than %d characters", bookmarksMaxDescriptionLength)
+	case len(payload.URL) > bookmarksMaxURLLength:
+		return fmt.Errorf("url is longer than %d characters", bookmarksMaxURLLength)
+	}
+
+	parsedURL, err := url.Parse(payload.URL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		return errors.New("url must be a valid http or https URL")
+	}
+
+	return nil
 }
 
 func renderBookmarkCard(w http.ResponseWriter, link bookmarkLink) (string, bool) {
@@ -771,18 +793,59 @@ func writeHTML(w http.ResponseWriter, html string) {
 	w.Write([]byte(html))
 }
 
+// bookmarkGroupAtIndex returns the group with the given index.
+func (widget *bookmarksWidget) bookmarkGroupAtIndex(groupIndex int) (*bookmarkGroup, error) {
+	if groupIndex < 0 || groupIndex >= len(widget.Groups) {
+		return nil, errBookmarkGroupNotFound
+	}
+
+	return &widget.Groups[groupIndex], nil
+}
+
+// bookmarkAtIndex returns the group and the link with the given indexes.
+func (widget *bookmarksWidget) bookmarkAtIndex(groupIndex, linkIndex int) (*bookmarkGroup, *bookmarkLink, error) {
+	group, err := widget.bookmarkGroupAtIndex(groupIndex)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if linkIndex < 0 || linkIndex >= len(group.Links) {
+		return nil, nil, errBookmarkNotFound
+	}
+
+	return group, &group.Links[linkIndex], nil
+}
+
+// writeBookmarkLookupError responds to a request that refers to a group or
+// bookmark that does not exist.
+func writeBookmarkLookupError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errBookmarkNotFound) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	http.Error(w, err.Error(), http.StatusBadRequest)
+}
+
+// writeBookmarkSaveError responds to a request whose change could not be
+// written to the config file.
+func (widget *bookmarksWidget) writeBookmarkSaveError(w http.ResponseWriter, action string, err error) {
+	slog.Error("Failed to "+action+" the bookmark in the config file", "error", err, "config", widget.configPath)
+	http.Error(w, "failed to "+action+" bookmark: "+err.Error(), http.StatusInternalServerError)
+}
+
 func (widget *bookmarksWidget) handleAddBookmark(w http.ResponseWriter, r *http.Request) {
 	payload, ok := readBookmarkPayload(w, r)
 	if !ok {
 		return
 	}
 
-	if payload.GroupIndex < 0 || payload.GroupIndex >= len(widget.Groups) {
-		http.Error(w, "unknown group", http.StatusBadRequest)
+	group, err := widget.bookmarkGroupAtIndex(payload.GroupIndex)
+	if err != nil {
+		writeBookmarkLookupError(w, err)
 		return
 	}
 
-	group := &widget.Groups[payload.GroupIndex]
 	link := group.newLink(payload)
 
 	cardHTML, ok := renderBookmarkCard(w, link)
@@ -791,12 +854,9 @@ func (widget *bookmarksWidget) handleAddBookmark(w http.ResponseWriter, r *http.
 	}
 
 	if err := widget.appendBookmarkToConfig(payload.GroupIndex, link); err != nil {
-		slog.Error("Failed to write bookmark to the config file", "error", err, "config", widget.configPath)
-		http.Error(w, "failed to save bookmark: "+err.Error(), http.StatusInternalServerError)
+		widget.writeBookmarkSaveError(w, "save", err)
 		return
 	}
-
-	widget.markConfigSelfWrite()
 
 	group.Links = append(group.Links, link)
 	widget.rerender()
@@ -810,63 +870,45 @@ func (widget *bookmarksWidget) handleUpdateBookmark(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if groupIndex < 0 || groupIndex >= len(widget.Groups) {
-		http.Error(w, "unknown group", http.StatusBadRequest)
-		return
-	}
-
-	group := &widget.Groups[groupIndex]
-
-	if linkIndex < 0 || linkIndex >= len(group.Links) {
-		http.Error(w, "unknown bookmark", http.StatusNotFound)
+	_, link, err := widget.bookmarkAtIndex(groupIndex, linkIndex)
+	if err != nil {
+		writeBookmarkLookupError(w, err)
 		return
 	}
 
 	// Keep the link's other options (icon, target, ...) which stay in the config.
-	link := group.Links[linkIndex]
-	link.Title = payload.Title
-	link.URL = payload.URL
-	link.Description = payload.Description
+	updated := *link
+	updated.Title = payload.Title
+	updated.URL = payload.URL
+	updated.Description = payload.Description
 
-	cardHTML, ok := renderBookmarkCard(w, link)
+	cardHTML, ok := renderBookmarkCard(w, updated)
 	if !ok {
 		return
 	}
 
-	if err := widget.updateBookmarkInConfig(groupIndex, linkIndex, link); err != nil {
-		slog.Error("Failed to update the bookmark in the config file", "error", err, "config", widget.configPath)
-		http.Error(w, "failed to save bookmark: "+err.Error(), http.StatusInternalServerError)
+	if err := widget.updateBookmarkInConfig(groupIndex, linkIndex, updated); err != nil {
+		widget.writeBookmarkSaveError(w, "save", err)
 		return
 	}
 
-	widget.markConfigSelfWrite()
-
-	group.Links[linkIndex] = link
+	*link = updated
 	widget.rerender()
 
 	writeHTML(w, cardHTML)
 }
 
 func (widget *bookmarksWidget) handleDeleteBookmark(w http.ResponseWriter, groupIndex, linkIndex int) {
-	if groupIndex < 0 || groupIndex >= len(widget.Groups) {
-		http.Error(w, "unknown group", http.StatusBadRequest)
-		return
-	}
-
-	group := &widget.Groups[groupIndex]
-
-	if linkIndex < 0 || linkIndex >= len(group.Links) {
-		http.Error(w, "unknown bookmark", http.StatusNotFound)
+	group, _, err := widget.bookmarkAtIndex(groupIndex, linkIndex)
+	if err != nil {
+		writeBookmarkLookupError(w, err)
 		return
 	}
 
 	if err := widget.deleteBookmarkFromConfig(groupIndex, linkIndex); err != nil {
-		slog.Error("Failed to delete the bookmark from the config file", "error", err, "config", widget.configPath)
-		http.Error(w, "failed to delete bookmark: "+err.Error(), http.StatusInternalServerError)
+		widget.writeBookmarkSaveError(w, "delete", err)
 		return
 	}
-
-	widget.markConfigSelfWrite()
 
 	group.Links = append(group.Links[:linkIndex], group.Links[linkIndex+1:]...)
 	widget.rerender()

@@ -140,6 +140,16 @@ func newConfigFromYAML(contents []byte) (*config, error) {
 	return config, nil
 }
 
+// widgetUpdateInterval returns how often widget data is refreshed in the
+// background.
+func (config *config) widgetUpdateInterval() time.Duration {
+	if config.Server.WidgetUpdateInterval == nil {
+		return DEFAULT_WIDGET_UPDATE_INTERVAL
+	}
+
+	return time.Duration(*config.Server.WidgetUpdateInterval)
+}
+
 var envVariableNamePattern = regexp.MustCompile(`^[A-Z0-9_]+$`)
 var configVariablePattern = regexp.MustCompile(`(^|.)\$\{(?:([a-zA-Z]+):)?([a-zA-Z0-9_-]+)\}`)
 
