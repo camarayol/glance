@@ -2615,9 +2615,14 @@ Preview:
 
 #### Properties
 
-| Name | Type | Required |
-| ---- | ---- | -------- |
-| groups | array | yes |
+| Name | Type | Required | Default |
+| ---- | ---- | -------- | ------- |
+| groups | array | yes | |
+| style | string | no | list |
+
+`style`
+
+How the links are displayed. `list` shows them as a plain list, `cards` shows each link as its own card styled like an individual widget.
 
 ##### `groups`
 An array of groups which can optionally have a title and a custom color.

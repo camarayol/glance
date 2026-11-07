@@ -29,3 +29,68 @@
     height: 20px;
     opacity: 0.8;
 }
+
+.bookmarks-cards-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 1.6rem;
+}
+
+.bookmarks-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+    gap: 1rem;
+}
+
+.bookmarks-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    --bookmarks-card-background: hsl(var(--bghs), calc(var(--scheme) (var(--scheme) var(--bgl) + 3%)));
+    padding: var(--widget-content-padding);
+    background: var(--bookmarks-card-background);
+    border: 1px solid var(--color-widget-content-border);
+    border-radius: var(--border-radius);
+    box-shadow: 0px 3px 0px 0px hsl(var(--bghs), calc(var(--scheme) (var(--scheme) var(--bgl)) - 0.5%));
+    transition: background-color .25s, box-shadow .25s, transform .25s;
+}
+
+.bookmarks-card:hover {
+    --bookmarks-card-background: hsl(var(--bghs), calc(var(--scheme) (var(--scheme) var(--bgl) + 6%)));
+    transform: translateY(-2px);
+    box-shadow: 0px 5px 0px 0px hsl(var(--bghs), calc(var(--scheme) (var(--scheme) var(--bgl)) - 1%));
+}
+
+.bookmarks-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    min-width: 0;
+}
+
+.bookmarks-card-title {
+    flex: 1;
+    min-width: 0;
+    text-transform: uppercase;
+}
+
+.bookmarks-card-arrow {
+    flex-shrink: 0;
+    color: var(--bookmarks-group-color);
+}
+
+.bookmarks-card-description {
+    margin-top: 0.6rem;
+    color: var(--color-text-paragraph);
+}
+
+@container widget (max-width: 599px) {
+    .bookmarks-cards {
+        grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+    }
+}
+
+.bookmarks-card .bookmarks-icon-container {
+    background-color: hsl(var(--bghs), calc(var(--scheme) (var(--scheme) var(--bgl) + 6%)));
+}

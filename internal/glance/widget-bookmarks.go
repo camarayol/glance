@@ -5,10 +5,12 @@ import (
 )
 
 var bookmarksWidgetTemplate = mustParseTemplate("bookmarks.html", "widget-base.html")
+var bookmarksCardsWidgetTemplate = mustParseTemplate("bookmarks-cards.html", "widget-base.html")
 
 type bookmarksWidget struct {
 	widgetBase `yaml:",inline"`
 	cachedHTML template.HTML `yaml:"-"`
+	Style      string        `yaml:"style"`
 	Groups     []struct {
 		Title     string         `yaml:"title"`
 		Color     *hslColorField `yaml:"color"`
@@ -67,7 +69,11 @@ func (widget *bookmarksWidget) initialize() error {
 		}
 	}
 
-	widget.cachedHTML = widget.renderTemplate(widget, bookmarksWidgetTemplate)
+	if widget.Style == "cards" {
+		widget.cachedHTML = widget.renderTemplate(widget, bookmarksCardsWidgetTemplate)
+	} else {
+		widget.cachedHTML = widget.renderTemplate(widget, bookmarksWidgetTemplate)
+	}
 
 	return nil
 }
