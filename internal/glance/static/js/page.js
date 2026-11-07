@@ -654,6 +654,14 @@ async function setupTodos() {
     }
 }
 
+async function setupBookmarksAdd() {
+    const elems = document.getElementsByClassName("bookmarks-add");
+    if (elems.length == 0) return;
+
+    const bookmarksAdd = await import ('./bookmarks-add.js');
+    bookmarksAdd.setup();
+}
+
 function setupTruncatedElementTitles() {
     const elements = document.querySelectorAll(".text-truncate, .single-line-titles .title, .text-truncate-2-lines, .text-truncate-3-lines");
 
@@ -766,6 +774,7 @@ async function setupPage() {
         setupClocks()
         await setupCalendars();
         await setupTodos();
+        await setupBookmarksAdd();
         setupCarousels();
         setupSearchBoxes();
         setupCollapsibleLists();

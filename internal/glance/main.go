@@ -1,14 +1,23 @@
 package glance
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sync/atomic"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+// configSelfWriteContentsHash holds the hash of the config contents that
+// Glance itself just wrote. It allows the config watcher to skip reloading
+// when the only change is one that Glance made, which would otherwise clear
+// all cached widget data and refetch everything.
+var configSelfWriteContentsHash atomic.Pointer[[32]byte]
 
 var buildVersion = "dev"
 
@@ -94,11 +103,21 @@ func serveApp(configPath string) error {
 	// TODO: refactor if this gets any more complex, the current implementation is
 	// difficult to reason about due to all of the callbacks and simultaneous operations,
 	// use a single goroutine and a channel to initiate synchronous changes to the server
+	absConfigPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return fmt.Errorf("resolving config path: %w", err)
+	}
+
 	exitChannel := make(chan struct{})
 	hadValidConfigOnStartup := false
 	var stopServer func() error
 
 	onChange := func(newContents []byte) {
+		if selfWrite := configSelfWriteContentsHash.Swap(nil); selfWrite != nil && *selfWrite == sha256.Sum256(newContents) {
+			log.Println("Config was updated by Glance itself, skipping reload")
+			return
+		}
+
 		if stopServer != nil {
 			log.Println("Config file changed, reloading...")
 		}
@@ -113,6 +132,8 @@ func serveApp(configPath string) error {
 
 			return
 		}
+
+		config.configPath = absConfigPath
 
 		app, err := newApplication(config)
 		if err != nil {
@@ -164,6 +185,8 @@ func serveApp(configPath string) error {
 		if err != nil {
 			return fmt.Errorf("validating config file: %w", err)
 		}
+
+		config.configPath = absConfigPath
 
 		app, err := newApplication(config)
 		if err != nil {

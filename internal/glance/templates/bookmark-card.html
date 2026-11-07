@@ -1,0 +1,16 @@
+<a href="{{ .URL | safeURL }}" class="bookmarks-card" {{ if .Target }}target="{{ .Target }}"{{ end }} rel="noreferrer">
+    <div class="bookmarks-card-header">
+        {{- if ne "" .Icon.URL }}
+        <div class="bookmarks-icon-container">
+            <img class="bookmarks-icon{{ if .Icon.AutoInvert }} flat-icon{{ end }}" src="{{ .Icon.URL }}" alt="" loading="lazy">
+        </div>
+        {{- end }}
+        <div class="bookmarks-card-title size-h4 color-highlight">{{ .Title }}</div>
+        {{- if not .HideArrow }}
+        <span class="bookmarks-card-arrow">↗</span>
+        {{- end }}
+    </div>
+    {{- if .Description }}
+    <div class="bookmarks-card-description">{{ .Description }}</div>
+    {{- end }}
+</a>

@@ -39,8 +39,9 @@ type application struct {
 
 	parsedManifest []byte
 
-	slugToPage map[string]*page
-	widgetByID map[uint64]widget
+	slugToPage     map[string]*page
+	widgetByID     map[uint64]widget
+	widgetPageByID map[uint64]*page
 
 	RequiresAuth           bool
 	authSecretKey          []byte
@@ -51,11 +52,12 @@ type application struct {
 
 func newApplication(c *config) (*application, error) {
 	app := &application{
-		Version:    buildVersion,
-		CreatedAt:  time.Now(),
-		Config:     *c,
-		slugToPage: make(map[string]*page),
-		widgetByID: make(map[uint64]widget),
+		Version:        buildVersion,
+		CreatedAt:      time.Now(),
+		Config:         *c,
+		slugToPage:     make(map[string]*page),
+		widgetByID:     make(map[uint64]widget),
+		widgetPageByID: make(map[uint64]*page),
 	}
 	config := &app.Config
 
@@ -155,6 +157,27 @@ func newApplication(c *config) (*application, error) {
 		assetResolver: app.StaticAssetPath,
 	}
 
+	// Widgets nested inside containers such as groups are registered as well,
+	// otherwise they can't be looked up by ID (e.g. for widget requests).
+	var registerWidget func(widget widget, page *page)
+	registerWidget = func(widget widget, page *page) {
+		app.widgetByID[widget.GetID()] = widget
+		app.widgetPageByID[widget.GetID()] = page
+
+		if bookmarks, ok := widget.(*bookmarksWidget); ok {
+			bookmarks.configPath = config.configPath
+		}
+
+		container, ok := widget.(interface{ _childWidgets() widgets })
+		if !ok {
+			return
+		}
+
+		for _, child := range container._childWidgets() {
+			registerWidget(child, page)
+		}
+	}
+
 	for p := range config.Pages {
 		page := &config.Pages[p]
 		page.PrimaryColumnIndex = -1
@@ -179,7 +202,7 @@ func newApplication(c *config) (*application, error) {
 
 		for i := range page.HeadWidgets {
 			widget := page.HeadWidgets[i]
-			app.widgetByID[widget.GetID()] = widget
+			registerWidget(widget, page)
 			widget.setProviders(providers)
 		}
 
@@ -192,7 +215,7 @@ func newApplication(c *config) (*application, error) {
 
 			for w := range column.Widgets {
 				widget := column.Widgets[w]
-				app.widgetByID[widget.GetID()] = widget
+				registerWidget(widget, page)
 				widget.setProviders(providers)
 			}
 		}
@@ -483,26 +506,43 @@ func (a *application) handleNotFound(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *application) handleWidgetRequest(w http.ResponseWriter, r *http.Request) {
+	if a.handleUnauthorizedResponse(w, r, showUnauthorizedJSON) {
+		return
+	}
+
+	widget, page, exists := a.findWidgetByPathValue(r.PathValue("widget"))
+	if !exists {
+		a.handleNotFound(w, r)
+		return
+	}
+
 	// TODO: this requires a rework of the widget update logic so that rather
 	// than locking the entire page we lock individual widgets
-	w.WriteHeader(http.StatusNotImplemented)
+	page.mu.Lock()
+	defer page.mu.Unlock()
 
-	// widgetValue := r.PathValue("widget")
+	widget.handleRequest(w, r)
+}
 
-	// widgetID, err := strconv.ParseUint(widgetValue, 10, 64)
-	// if err != nil {
-	// 	a.handleNotFound(w, r)
-	// 	return
-	// }
+// findWidgetByPathValue resolves a widget from the value of the {widget} path
+// segment. Either the widget's runtime ID or, for widgets that have one, its
+// stable config-level id can be used.
+func (a *application) findWidgetByPathValue(value string) (widget, *page, bool) {
+	if widgetID, err := strconv.ParseUint(value, 10, 64); err == nil {
+		widget, exists := a.widgetByID[widgetID]
+		if exists {
+			page, pageExists := a.widgetPageByID[widgetID]
+			return widget, page, pageExists
+		}
+	}
 
-	// widget, exists := a.widgetByID[widgetID]
+	for _, widget := range a.widgetByID {
+		if bookmarks, ok := widget.(*bookmarksWidget); ok && bookmarks.BookmarksID == value {
+			return widget, a.widgetPageByID[widget.GetID()], true
+		}
+	}
 
-	// if !exists {
-	// 	a.handleNotFound(w, r)
-	// 	return
-	// }
-
-	// widget.handleRequest(w, r)
+	return nil, nil, false
 }
 
 func (a *application) StaticAssetPath(asset string) string {
@@ -526,7 +566,7 @@ func (a *application) server() (func() error, func() error) {
 		mux.HandleFunc("POST /api/set-theme/{key}", a.handleThemeChangeRequest)
 	}
 
-	mux.HandleFunc("/api/widgets/{widget}/{path...}", a.handleWidgetRequest)
+	mux.HandleFunc("POST /api/widgets/{widget}/{path...}", a.handleWidgetRequest)
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

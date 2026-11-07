@@ -2,29 +2,17 @@
 
 {{ define "widget-content" }}
 <div class="bookmarks-cards-groups">
-    {{- range .Groups }}
-    <div class="bookmarks-group"{{ if .Color }} style="--bookmarks-group-color: {{ .Color.String | safeCSS }}"{{ end }}>
-        {{- if ne .Title "" }}
-        <div class="bookmarks-group-title size-h3 margin-bottom-7">{{ .Title }}</div>
+    {{- range $groupIndex, $group := .Groups }}
+    <div class="bookmarks-group"{{ if $group.Color }} style="--bookmarks-group-color: {{ $group.Color.String | safeCSS }}"{{ end }}>
+        {{- if ne $group.Title "" }}
+        <div class="bookmarks-group-title size-h3 margin-bottom-7">{{ $group.Title }}</div>
         {{- end }}
         <div class="bookmarks-cards">
-            {{- range .Links }}
-            <a href="{{ .URL | safeURL }}" class="bookmarks-card" {{ if .Target }}target="{{ .Target }}"{{ end }} rel="noreferrer">
-                <div class="bookmarks-card-header">
-                    {{- if ne "" .Icon.URL }}
-                    <div class="bookmarks-icon-container">
-                        <img class="bookmarks-icon{{ if .Icon.AutoInvert }} flat-icon{{ end }}" src="{{ .Icon.URL }}" alt="" loading="lazy">
-                    </div>
-                    {{- end }}
-                    <div class="bookmarks-card-title size-h4 color-highlight">{{ .Title }}</div>
-                    {{- if not .HideArrow }}
-                    <span class="bookmarks-card-arrow">↗</span>
-                    {{- end }}
-                </div>
-                {{- if .Description }}
-                <div class="bookmarks-card-description">{{ .Description }}</div>
-                {{- end }}
-            </a>
+            {{- range $group.Links }}
+            {{ template "bookmark-card.html" . }}
+            {{- end }}
+            {{- if $.AllowAdd }}
+            <div class="bookmarks-card bookmarks-add" data-bookmarks-id="{{ $.BookmarksID }}" data-group-index="{{ $groupIndex }}"></div>
             {{- end }}
         </div>
     </div>

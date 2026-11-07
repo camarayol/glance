@@ -2619,10 +2619,54 @@ Preview:
 | ---- | ---- | -------- | ------- |
 | groups | array | yes | |
 | style | string | no | list |
+| id | string | no | |
+| allow-add | boolean | no | false |
 
 `style`
 
 How the links are displayed. `list` shows them as a plain list, `cards` shows each link as its own card styled like an individual widget.
+
+`id`
+
+A unique identifier for this widget. Required when `allow-add` is enabled. May only contain letters, numbers, dashes and underscores.
+
+`allow-add`
+
+When enabled, an "Add bookmark" control is shown in every group. Clicking it replaces the control in place with a floating form (its top lines up with the other cards), so a bookmark can be added without leaving the dashboard. The form closes after the bookmark has been saved; add the next one by opening it again.
+
+Added bookmarks are written directly into the config file that defines the widget (the main config file or an included file such as `bookmarks.yml`), appended to the `links` of the group the control belongs to. Comments and formatting of the rest of the file are preserved, so the config stays the single source of truth. Because the file is written by Glance itself, the config watcher does not trigger a full reload (and a cache wipe) for these changes.
+
+Requirements:
+
+- Only supported with `style: cards`.
+- The group must already have a `links` property, and it must use block style YAML, i.e. one link per line. Inline lists such as `links: [{ title: ..., url: ... }]` are rejected.
+- If authentication is enabled, adding bookmarks requires being logged in.
+
+```yaml
+- type: bookmarks
+  style: cards
+  id: home
+  allow-add: true
+  groups:
+    - title: Bookmarks
+      links:
+        - title: GitHub
+          url: https://github.com/
+```
+
+The same endpoint can be called directly, which is handy for adding bookmarks from scripts or browser shortcuts:
+
+```sh
+curl -X POST http://localhost:8080/api/widgets/home/bookmarks \
+  -H 'Content-Type: application/json' \
+  -d '{"group-index": 0, "title": "GitHub", "url": "https://github.com/", "description": "Code hosting"}'
+```
+
+`home` is the widget's `id`. The numeric widget id found in the page source also works, but it changes whenever the config is reloaded, so `id` is recommended for scripts. `group-index` is the zero-based index of the group the bookmark should be added to. The response body contains the rendered card HTML.
+
+> [!NOTE]
+>
+> The config directory must be writable for added bookmarks to be saved. In Docker, make sure it is not mounted as read-only.
 
 ##### `groups`
 An array of groups which can optionally have a title and a custom color.

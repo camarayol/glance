@@ -94,3 +94,163 @@
 .bookmarks-card .bookmarks-icon-container {
     background-color: hsl(var(--bghs), calc(var(--scheme) (var(--scheme) var(--bgl) + 6%)));
 }
+
+.bookmarks-add {
+    min-height: 3.8rem;
+    padding: 0;
+    background: transparent;
+    border-style: dashed;
+    box-shadow: none;
+    color: var(--color-text-subdue);
+    cursor: pointer;
+    transition: color .2s, border-color .2s, background-color .2s;
+}
+
+.bookmarks-add:hover {
+    background: var(--bookmarks-card-background);
+    border-color: var(--color-text-subdue);
+    color: var(--color-text-base);
+    /* Keep the card in place so hovering can't make it flicker out from under
+       the pointer, which used to swallow clicks near the card's edges. */
+    transform: none;
+    box-shadow: none;
+}
+
+/* Hidden while its popover is open, but it keeps its space in the grid. */
+.bookmarks-add-open {
+    visibility: hidden;
+}
+
+.bookmarks-add-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    flex: 1;
+    width: 100%;
+    margin: 0;
+    padding: var(--widget-content-padding);
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.bookmarks-add-label {
+    font-size: var(--font-size-h4);
+}
+
+.bookmarks-add-plus {
+    position: relative;
+    width: 1.4rem;
+    height: 1.4rem;
+    flex-shrink: 0;
+    margin-inline: 3px;
+}
+
+.bookmarks-add-plus::before, .bookmarks-add-plus::after {
+    content: "";
+    position: absolute;
+    background-color: currentColor;
+}
+
+.bookmarks-add-plus::before {
+    width: 2px;
+    inset-block: 0.2rem;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.bookmarks-add-plus::after {
+    height: 2px;
+    inset-inline: 0.2rem;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.bookmarks-add-popover {
+    position: fixed;
+    z-index: 100;
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
+    padding: var(--widget-content-padding);
+    background: var(--color-popover-background);
+    border: 1px solid var(--color-popover-border);
+    border-radius: var(--border-radius);
+    box-shadow: 0 15px 20px -10px hsla(var(--bghs), calc(var(--bgl) * 0.2), 0.5);
+    transform-origin: top left;
+    animation: bookmarksAddPopoverEntrance .15s ease-out backwards;
+}
+
+@keyframes bookmarksAddPopoverEntrance {
+    from {
+        opacity: 0;
+        transform: translateY(-4px) scale(.97);
+    }
+}
+
+.bookmarks-add-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    color: var(--color-text-base);
+    cursor: default;
+}
+
+.bookmarks-add-input {
+    width: 100%;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--color-widget-content-border);
+    border-radius: calc(var(--border-radius) / 2);
+    background: var(--color-background);
+    color: var(--color-text-highlight);
+    font: inherit;
+}
+
+.bookmarks-add-input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+}
+
+.bookmarks-add-input::placeholder {
+    color: var(--color-text-base-muted);
+}
+
+.bookmarks-add-footer {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+}
+
+.bookmarks-add-submit, .bookmarks-add-cancel {
+    padding: 0.3rem 1rem;
+    border: 1px solid var(--color-widget-content-border);
+    border-radius: calc(var(--border-radius) / 2);
+    background: transparent;
+    color: var(--color-text-base);
+    font: inherit;
+    cursor: pointer;
+    transition: color .2s, border-color .2s;
+}
+
+.bookmarks-add-submit {
+    color: var(--color-primary);
+}
+
+.bookmarks-add-submit:hover:not(:disabled), .bookmarks-add-cancel:hover {
+    color: var(--color-text-highlight);
+    border-color: var(--color-text-subdue);
+}
+
+.bookmarks-add-submit:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.bookmarks-add-error {
+    flex-basis: 100%;
+    font-size: var(--font-size-h6);
+    color: var(--color-negative);
+}

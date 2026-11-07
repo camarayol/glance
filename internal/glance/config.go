@@ -67,6 +67,12 @@ type config struct {
 	} `yaml:"branding"`
 
 	Pages []page `yaml:"pages"`
+
+	// configPath is the absolute path of the main config file. It is set by
+	// the server and is not part of the config itself. Widgets that can modify
+	// the config, such as bookmarks with allow-add enabled, use it to find the
+	// file they were defined in.
+	configPath string
 }
 
 type user struct {
