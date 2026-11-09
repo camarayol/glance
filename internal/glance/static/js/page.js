@@ -1,5 +1,6 @@
 import { setupPopovers } from './popover.js';
 import { setupMasonries } from './masonry.js';
+import { setupBookmarkSearch } from './bookmark-search.js';
 import { throttledDebounce, isElementVisible, openURLInNewTab } from './utils.js';
 import { elem, find, findAll } from './templating.js';
 
@@ -777,6 +778,7 @@ async function setupPage() {
         await setupBookmarks();
         setupCarousels();
         setupSearchBoxes();
+        setupBookmarkSearch();
         setupCollapsibleLists();
         setupCollapsibleGrids();
         setupGroups();

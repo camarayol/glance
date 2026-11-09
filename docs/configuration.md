@@ -1206,7 +1206,7 @@ widgets:
 To register an app on Reddit, go to [this page](https://ssl.reddit.com/prefs/apps/).
 
 ### Search Widget
-Display a search bar that can be used to search for specific terms on various search engines.
+Display a search bar that can be used to search for specific terms on various search engines, or filter bookmarks on the current page using a configured bang with `url: bookmarks`.
 
 Example:
 
@@ -1235,6 +1235,41 @@ Preview:
 > [!TIP]
 >
 > You can use the property `new-tab` with a value of `true` if you want to show search results in a new tab by default. <kbd>Ctrl</kbd> + <kbd>Enter</kbd> will then show results in the same tab.
+
+#### Bookmark search
+
+Configure a bang with the special value `url: bookmarks` to filter all Bookmarks widgets on the current page. It uses the same `title`, `shortcut` and `url` properties as any other bang; no additional properties are required. For example:
+
+```yaml
+- type: search
+  search-engine: duckduckgo
+  bangs:
+    - title: Bookmarks
+      shortcut: "!bm"
+      url: bookmarks
+    - title: YouTube
+      shortcut: "!yt"
+      url: https://www.youtube.com/results?search_query={QUERY}
+```
+
+The shortcut is configurable and case-sensitive, just like other bangs, and does not have to start with `!`. The right side of the search bar displays the configured `title`, or no label if it is omitted. There is no built-in `!bm` shortcut: without a bang using `url: bookmarks`, search behavior is unchanged. Ordinary queries still use the configured `search-engine`, and other bang URLs keep their existing behavior.
+
+With the example above, `!bm github` matches bookmark titles, URLs, descriptions and group names. Query matching is case-insensitive, and multiple whitespace-separated terms must all match. Both list and cards styles are supported. Search covers every Bookmarks widget on the current page, including all Bookmarks widgets inside the same Group, regardless of which tab is active. Searching does not send the query to an external service or modify the configuration.
+
+| Keys | Action in bookmark search mode |
+| ---- | ---- |
+| <kbd>Down</kbd> / <kbd>Up</kbd> | Select the next / previous match |
+| <kbd>Tab</kbd> / <kbd>Shift</kbd> + <kbd>Tab</kbd> | Cycle forwards / backwards when multiple bookmarks match |
+| <kbd>Enter</kbd> | Open the selected bookmark immediately |
+| <kbd>Escape</kbd> | Clear the query, restore the bookmarks and focus the search input |
+
+The first match in page order is selected automatically. Use the arrow keys or Tab / Shift+Tab to choose another match, including matches in other Group tabs, then press Enter once to open it. Opening uses the bookmark's own link target, just like clicking it; the Search widget's `new-tab` setting does not override it.
+
+While typing or selecting matches from the search input, focus stays in the input. The Group tab containing the selected bookmark is activated automatically unless doing so would hide the search input itself. Even in that case, Enter can open the selected bookmark without switching tabs first. Tab retains its normal behavior when fewer than two bookmarks match, and Ctrl+Tab is not intercepted.
+
+Entering just `!bm` leaves the bookmarks unchanged. A query with no matches hides non-matching bookmarks; Enter does not fall back to a web search. Clearing the input or switching to a web query restores the bookmarks. Bookmarks added, edited or deleted through the web interface are reflected in the active filter.
+
+If migrating from a custom bookmark-search script, remove that script from `document.head` before using this built-in feature to avoid handling keyboard events twice. The built-in styles also replace any custom `.bookmark-search-*` rules.
 
 #### Properties
 | Name | Type | Required | Default |
@@ -1296,7 +1331,7 @@ Any value you wish to use as the shortcut for the search engine. It does not hav
 >```
 
 ###### `url`
-The URL of the search engine. Use `{QUERY}` to indicate where the query value gets placed. Examples:
+The URL of the search engine. Use `{QUERY}` to indicate where the query value gets placed. The special value `bookmarks` performs a local [bookmark search](#bookmark-search) instead of opening a URL. Examples:
 
 ```yaml
 url: https://www.reddit.com/search?q={QUERY}

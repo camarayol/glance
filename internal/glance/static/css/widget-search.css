@@ -77,3 +77,18 @@
 .search-bang:empty {
     display: none;
 }
+
+.bookmark-search-hidden {
+    display: none !important;
+}
+
+.bookmark-search-target {
+    outline: 2px solid var(--color-primary) !important;
+    outline-offset: 3px;
+    border-radius: var(--border-radius);
+    scroll-margin-block: 100px;
+}
+
+.bookmark-search-filtering .widget-type-bookmarks .bookmarks-add {
+    display: none !important;
+}
